@@ -34,7 +34,10 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Install wasm-pack
-        run: cargo install wasm-pack --version 0.14.0 --locked
+        run: |
+          curl -L https://github.com/rustwasm/wasm-pack/releases/download/v0.14.0/wasm-pack-v0.14.0-x86_64-unknown-linux-musl.tar.gz -o wasm-pack.tar.gz
+          tar -xzf wasm-pack.tar.gz
+          echo "$PWD/wasm-pack-v0.14.0-x86_64-unknown-linux-musl" >> "$GITHUB_PATH"
 
       - uses: actions/setup-node@v4
         with:
