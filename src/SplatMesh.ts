@@ -1,6 +1,7 @@
 import * as THREE from "three";
 
 import {
+  get_pick_slack,
   get_raycast_buffer,
   get_raycast_buffer2,
   last_pick_stats,
@@ -9,6 +10,7 @@ import {
   pick_lod_packed_buffer,
   raycast_ext_buffers,
   raycast_packed_buffer,
+  set_pick_slack,
 } from "spark-rs";
 import { ExtSplats } from "./ExtSplats";
 import { PackedSplats } from "./PackedSplats";
@@ -1351,6 +1353,12 @@ export class SplatMesh extends SplatGenerator {
       (this as unknown as Record<string, unknown>).__lastPickStats = stats;
       (globalThis as unknown as Record<string, unknown>).__sparkLastPickStats =
         stats;
+      (globalThis as unknown as Record<string, unknown>).__sparkSetPickSlack = (
+        i: number,
+        l: number,
+      ) => set_pick_slack(i, l);
+      (globalThis as unknown as Record<string, unknown>).__sparkGetPickSlack =
+        () => get_pick_slack();
     } catch {
       // ignore if wasm not updated yet
     }

@@ -211,6 +211,14 @@ thread_local! {
     static PICK_STATS: RefCell<PickStats> = RefCell::new(PickStats::default());
 }
 
+thread_local! {
+    static PICK_SLACK: RefCell<(f32, f32)> = RefCell::new((INTERNAL_NODE_SLACK, LEAF_NODE_SLACK));
+}
+
+thread_local! {
+    static CHILDREN_SCRATCH: RefCell<Vec<(f32, u32)>> = RefCell::new(Vec::with_capacity(16));
+}
+
 #[wasm_bindgen]
 pub fn last_pick_stats() -> Uint32Array {
     PICK_STATS.with_borrow(|s| {
@@ -221,6 +229,21 @@ pub fn last_pick_stats() -> Uint32Array {
         arr.set_index(3, s.splats_hit);
         arr.set_index(4, s.proxy_tests);
         arr.set_index(5, s.max_depth);
+        arr
+    })
+}
+
+#[wasm_bindgen]
+pub fn set_pick_slack(internal: f32, leaf: f32) {
+    PICK_SLACK.with_borrow_mut(|s| *s = (internal, leaf));
+}
+
+#[wasm_bindgen]
+pub fn get_pick_slack() -> js_sys::Float32Array {
+    PICK_SLACK.with_borrow(|s| {
+        let arr = js_sys::Float32Array::new_with_length(2);
+        arr.set_index(0, s.0);
+        arr.set_index(1, s.1);
         arr
     })
 }
@@ -628,6 +651,7 @@ fn pick_lod_tree(
             *s = PickStats::default();
         });
         let splats = lod_tree.splats.borrow();
+        let (internal_slack, leaf_slack) = PICK_SLACK.with_borrow(|s| *s);
         if root_index as usize >= splats.len() {
             return;
         }
@@ -648,7 +672,7 @@ fn pick_lod_tree(
             });
 
             if splat.child_count > 0 {
-                if !ray_might_hit_splat(origin, dir, near, best_t, splat, INTERNAL_NODE_SLACK) {
+                if !ray_might_hit_splat(origin, dir, near, best_t, splat, internal_slack) {
                     continue;
                 }
                 PICK_STATS.with_borrow_mut(|s| s.internal_nodes_visited += 1);
@@ -679,44 +703,46 @@ fn pick_lod_tree(
                     continue;
                 }
 
-                let mut children = Vec::with_capacity(splat.child_count as usize);
-                for child in splat.child_start..splat.child_start + splat.child_count as u32 {
-                    if let Some(paged_child) = resident_packed_index(child, &lod_tree.chunk_to_page) {
-                        if let Some(child_splat) = splats.get(paged_child as usize) {
-                            let slack = if child_splat.child_count > 0 {
-                                INTERNAL_NODE_SLACK
-                            } else {
-                                LEAF_NODE_SLACK
-                            };
-                            if !ray_might_hit_splat(origin, dir, near, best_t, child_splat, slack) {
-                                continue;
+                CHILDREN_SCRATCH.with_borrow_mut(|children| {
+                    children.clear();
+                    for child in splat.child_start..splat.child_start + splat.child_count as u32 {
+                        if let Some(paged_child) = resident_packed_index(child, &lod_tree.chunk_to_page) {
+                            if let Some(child_splat) = splats.get(paged_child as usize) {
+                                let slack = if child_splat.child_count > 0 {
+                                    internal_slack
+                                } else {
+                                    leaf_slack
+                                };
+                                if !ray_might_hit_splat(origin, dir, near, best_t, child_splat, slack) {
+                                    continue;
+                                }
+                                let radius = child_splat.size() * slack;
+                                let t = if radius > 0.0 {
+                                    ray_sphere_check(
+                                        origin,
+                                        dir,
+                                        near,
+                                        child_splat.center().to_array(),
+                                        radius,
+                                    ).unwrap_or(f32::INFINITY)
+                                } else {
+                                    0.0
+                                };
+                                children.push((t, paged_child));
                             }
-                            let radius = child_splat.size() * slack;
-                            let t = if radius > 0.0 {
-                                ray_sphere_check(
-                                    origin,
-                                    dir,
-                                    near,
-                                    child_splat.center().to_array(),
-                                    radius,
-                                ).unwrap_or(f32::INFINITY)
-                            } else {
-                                0.0
-                            };
-                            children.push((t, paged_child));
                         }
                     }
-                }
-                children.sort_unstable_by(|a, b| {
-                    b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal)
+                    children.sort_unstable_by(|a, b| {
+                        b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                    for &(_, child) in children.iter() {
+                        stack.push((child, depth + 1));
+                    }
                 });
-                for (_, child) in children {
-                    stack.push((child, depth + 1));
-                }
                 continue;
             }
 
-            if !ray_might_hit_splat(origin, dir, near, best_t, splat, LEAF_NODE_SLACK) {
+            if !ray_might_hit_splat(origin, dir, near, best_t, splat, leaf_slack) {
                 continue;
             }
             PICK_STATS.with_borrow_mut(|s| s.leaf_nodes_visited += 1);
@@ -1343,6 +1369,25 @@ mod tests {
         let normal = [hits[5], hits[6], hits[7]];
         let dot = normal[0] * -DIR[0] + normal[1] * -DIR[1] + normal[2] * -DIR[2];
         assert!(dot > 0.0, "normal {normal:?} does not face camera");
+    }
+
+    // CHANGE A: Verify that the scratch-buffer children path produces identical results
+    // across repeated calls (determinism / equivalence test).
+    #[test]
+    fn scratch_buffer_determinism() {
+        reset_state();
+        let encoding = SplatEncoding::default();
+        let lod_tree = synthetic_tree();
+        let packed = packed_buffer(&encoding);
+
+        let hits_a = pick_tree(&lod_tree, &packed, &encoding);
+        let hits_b = pick_tree(&lod_tree, &packed, &encoding);
+
+        assert!(!hits_a.is_empty(), "expected at least one hit");
+        assert_eq!(hits_a.len(), hits_b.len(), "hit count must be identical across calls");
+        for (a, b) in hits_a.iter().zip(hits_b.iter()) {
+            assert_eq!(a.to_bits(), b.to_bits(), "hit values must be bit-identical: {a} != {b}");
+        }
     }
 }
 
