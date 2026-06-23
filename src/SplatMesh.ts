@@ -5,13 +5,9 @@ import {
   get_raycast_buffer2,
   new_shared_lod_tree as newMainSharedLodTree,
   pick_lod_ext_buffers,
-  pick_lod_ext_cached_buffers,
   pick_lod_packed_buffer,
-  pick_lod_packed_cached_buffer,
   raycast_ext_buffers,
   raycast_packed_buffer,
-  upload_pick_lod_ext_buffers,
-  upload_pick_lod_packed_buffer,
 } from "spark-rs";
 import { ExtSplats } from "./ExtSplats";
 import { PackedSplats } from "./PackedSplats";
@@ -1256,11 +1252,11 @@ export class SplatMesh extends SplatGenerator {
           return;
         }
         if (paged) {
-          const version = this.paged?.pager?.pickBufferVersion ?? 0;
-          upload_pick_lod_ext_buffers(lodId, ext1, ext2, version);
-          newIntersections = pick_lod_ext_cached_buffers(
+          newIntersections = pick_lod_ext_buffers(
             lodId,
             rootIndex,
+            ext1,
+            ext2,
             origin.x,
             origin.y,
             origin.z,
@@ -1294,11 +1290,10 @@ export class SplatMesh extends SplatGenerator {
           return;
         }
         if (paged) {
-          const version = this.paged?.pager?.pickBufferVersion ?? 0;
-          upload_pick_lod_packed_buffer(lodId, packed, version);
-          newIntersections = pick_lod_packed_cached_buffer(
+          newIntersections = pick_lod_packed_buffer(
             lodId,
             rootIndex,
+            packed,
             origin.x,
             origin.y,
             origin.z,

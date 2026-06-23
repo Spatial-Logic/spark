@@ -287,22 +287,8 @@ function pick_lod_ext_buffers(lod_id, root_index, ext_splats, ext_splats2, origi
   }
   return takeFromExternrefTable0(ret[0]);
 }
-function pick_lod_ext_cached_buffers(lod_id, root_index, origin_x, origin_y, origin_z, dir_x, dir_y, dir_z, min_opacity, near, far) {
-  const ret = wasm.pick_lod_ext_cached_buffers(lod_id, root_index, origin_x, origin_y, origin_z, dir_x, dir_y, dir_z, min_opacity, near, far);
-  if (ret[2]) {
-    throw takeFromExternrefTable0(ret[1]);
-  }
-  return takeFromExternrefTable0(ret[0]);
-}
 function pick_lod_packed_buffer(lod_id, root_index, packed_splats, origin_x, origin_y, origin_z, dir_x, dir_y, dir_z, min_opacity, near, far, ln_scale_min, ln_scale_max, lod_opacity) {
   const ret = wasm.pick_lod_packed_buffer(lod_id, root_index, packed_splats, origin_x, origin_y, origin_z, dir_x, dir_y, dir_z, min_opacity, near, far, ln_scale_min, ln_scale_max, lod_opacity);
-  if (ret[2]) {
-    throw takeFromExternrefTable0(ret[1]);
-  }
-  return takeFromExternrefTable0(ret[0]);
-}
-function pick_lod_packed_cached_buffer(lod_id, root_index, origin_x, origin_y, origin_z, dir_x, dir_y, dir_z, min_opacity, near, far, ln_scale_min, ln_scale_max, lod_opacity) {
-  const ret = wasm.pick_lod_packed_cached_buffer(lod_id, root_index, origin_x, origin_y, origin_z, dir_x, dir_y, dir_z, min_opacity, near, far, ln_scale_min, ln_scale_max, lod_opacity);
   if (ret[2]) {
     throw takeFromExternrefTable0(ret[1]);
   }
@@ -330,20 +316,6 @@ function update_lod_trees(lod_ids, page_bases, chunk_bases, counts, lod_trees) {
     throw takeFromExternrefTable0(ret[1]);
   }
   return takeFromExternrefTable0(ret[0]);
-}
-function upload_pick_lod_ext_buffers(lod_id, ext_splats, ext_splats2, version) {
-  const ret = wasm.upload_pick_lod_ext_buffers(lod_id, ext_splats, ext_splats2, version);
-  if (ret[2]) {
-    throw takeFromExternrefTable0(ret[1]);
-  }
-  return ret[0] !== 0;
-}
-function upload_pick_lod_packed_buffer(lod_id, packed_splats, version) {
-  const ret = wasm.upload_pick_lod_packed_buffer(lod_id, packed_splats, version);
-  if (ret[2]) {
-    throw takeFromExternrefTable0(ret[1]);
-  }
-  return ret[0] !== 0;
 }
 function __wbg_get_imports() {
   const import0 = {
@@ -12692,7 +12664,7 @@ const _SplatMesh = class _SplatMesh extends SplatGenerator {
     }
   }
   pickLod(raycaster, intersects, opts) {
-    var _a2, _b2, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
+    var _a2, _b2, _c, _d, _e, _f, _g, _h, _i, _j;
     if (!isInitialized() || !this.raycastable || !this.packedSplats && !this.extSplats && !this.paged) {
       return;
     }
@@ -12738,11 +12710,11 @@ const _SplatMesh = class _SplatMesh extends SplatGenerator {
           return;
         }
         if (paged) {
-          const version = ((_l = (_k = this.paged) == null ? void 0 : _k.pager) == null ? void 0 : _l.pickBufferVersion) ?? 0;
-          upload_pick_lod_ext_buffers(lodId, ext1, ext2, version);
-          newIntersections = pick_lod_ext_cached_buffers(
+          newIntersections = pick_lod_ext_buffers(
             lodId,
             rootIndex,
+            ext1,
+            ext2,
             origin.x,
             origin.y,
             origin.z,
@@ -12776,11 +12748,10 @@ const _SplatMesh = class _SplatMesh extends SplatGenerator {
           return;
         }
         if (paged) {
-          const version = ((_n = (_m = this.paged) == null ? void 0 : _m.pager) == null ? void 0 : _n.pickBufferVersion) ?? 0;
-          upload_pick_lod_packed_buffer(lodId, packed, version);
-          newIntersections = pick_lod_packed_cached_buffer(
+          newIntersections = pick_lod_packed_buffer(
             lodId,
             rootIndex,
+            packed,
             origin.x,
             origin.y,
             origin.z,

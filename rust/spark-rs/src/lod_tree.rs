@@ -1163,6 +1163,70 @@ mod tests {
         packed
     }
 
+    fn pick_tree(lod_tree: &LodTree, packed: &[u32], encoding: &SplatEncoding) -> Vec<f32> {
+        let mut hits = Vec::new();
+        pick_lod_tree(
+            lod_tree,
+            0,
+            PickBuffers::Packed {
+                packed_splats: U32Buffer::Slice(packed),
+                encoding,
+            },
+            &mut hits,
+            ORIGIN,
+            DIR,
+            0.01,
+            0.0,
+            10.0,
+        );
+        hits
+    }
+
+    fn assert_hits_close(a: &[f32], b: &[f32]) {
+        assert_eq!(a.len(), b.len());
+        for (a, b) in a.iter().zip(b) {
+            assert!((a - b).abs() < 1.0e-5, "{a} != {b}");
+        }
+    }
+
+    #[test]
+    fn packed_slice_path_matches_cached_full_buffer_path() {
+        reset_state();
+        let encoding = SplatEncoding::default();
+        let lod_tree = synthetic_tree();
+        let packed = packed_buffer(&encoding);
+        let direct_hits = pick_tree(&lod_tree, &packed, &encoding);
+
+        STATE.with_borrow_mut(|state| {
+            state.lod_trees.insert(TEST_LOD_ID, lod_tree);
+            state.pick_buffers.insert(
+                TEST_LOD_ID,
+                PickBufferCache {
+                    version: 1,
+                    packed: packed.clone(),
+                    ext: None,
+                },
+            );
+        });
+
+        let mut cached_hits = Vec::new();
+        pick_lod_packed_cached_tree(
+            TEST_LOD_ID,
+            0,
+            &mut cached_hits,
+            ORIGIN,
+            DIR,
+            0.01,
+            0.0,
+            10.0,
+            &encoding,
+        )
+        .unwrap();
+
+        assert!(!direct_hits.is_empty());
+        assert_hits_close(&direct_hits, &cached_hits);
+    }
+
     #[test]
     fn shared_lod_tree_after_disposal_can_still_pick() {
         reset_state();
@@ -1208,6 +1272,19 @@ mod tests {
         assert!(!hits.is_empty());
     }
 
+    #[test]
+    fn packed_pick_normal_faces_camera() {
+        reset_state();
+        let encoding = SplatEncoding::default();
+        let lod_tree = synthetic_tree();
+        let packed = packed_buffer(&encoding);
+        let hits = pick_tree(&lod_tree, &packed, &encoding);
+
+        assert_eq!(hits.len(), 8);
+        let normal = [hits[5], hits[6], hits[7]];
+        let dot = normal[0] * -DIR[0] + normal[1] * -DIR[1] + normal[2] * -DIR[2];
+        assert!(dot > 0.0, "normal {normal:?} does not face camera");
+    }
 }
 
 fn compute_pixel_scale<'a>(
