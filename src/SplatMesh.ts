@@ -3,6 +3,10 @@ import * as THREE from "three";
 import {
   get_raycast_buffer,
   get_raycast_buffer2,
+  pick_lod_ext_buffers,
+  pick_lod_ext_raycast_buffers,
+  pick_lod_packed_buffer,
+  pick_lod_packed_raycast_buffer,
   raycast_ext_buffers,
   raycast_packed_buffer,
 } from "spark-rs";
@@ -49,6 +53,21 @@ import {
   unindentLines,
 } from "./dyno";
 import * as wasm from "./wasm";
+
+const PICK_LOD_NORMAL_SMOOTH_ALPHA = 0.25;
+const PICK_LOD_NORMAL_SNAP_COS = 0.5;
+
+type SplatIntersection = {
+  distance: number;
+  point: THREE.Vector3;
+  object: THREE.Object3D;
+  index?: number;
+  sparkHit?: {
+    worldPoint: THREE.Vector3;
+    worldNormal: THREE.Vector3 | null;
+    extras: Record<string, unknown>;
+  };
+};
 
 export type SplatMeshOptions = {
   // URL to fetch a Gaussian splat file from(supports .ply, .splat, .ksplat,
@@ -288,6 +307,7 @@ export class SplatMesh extends SplatGenerator {
   raycastable: boolean;
   minRaycastOpacity: number;
   raycastIndices?: { numSplats: number; indices: Uint32Array };
+  private pickLodSmoothedNormal: THREE.Vector3 | null = null;
   // Compiled SplatEdits for applying SDF edits to splat RGBA + centers
   rgbaDisplaceEdits: SplatEdits | null = null;
   // Optional RgbaArray to overwrite splat RGBA values with custom values.
@@ -995,14 +1015,7 @@ export class SplatMesh extends SplatGenerator {
   // This method conforms to the standard THREE.Raycaster API, performing object-ray
   // intersections using this method to populate the provided intersects[] array
   // with each intersection point.
-  raycast(
-    raycaster: THREE.Raycaster,
-    intersects: {
-      distance: number;
-      point: THREE.Vector3;
-      object: THREE.Object3D;
-    }[],
-  ) {
+  raycast(raycaster: THREE.Raycaster, intersects: SplatIntersection[]) {
     if (
       !wasm.isInitialized() ||
       !this.raycastable ||
@@ -1020,6 +1033,9 @@ export class SplatMesh extends SplatGenerator {
     const worldToMeshRot = new THREE.Matrix3().setFromMatrix4(worldToMesh);
     const origin = ray.origin.clone().applyMatrix4(worldToMesh);
     const direction = ray.direction.clone().applyMatrix3(worldToMeshRot);
+    const normalMatrix = new THREE.Matrix3().getNormalMatrix(this.matrixWorld);
+    const worldScale = new THREE.Vector3().setFromMatrixScale(this.matrixWorld);
+    const worldScaleFactor = Math.max(worldScale.x, worldScale.y, worldScale.z);
 
     const buffer = get_raycast_buffer();
     const bufferSize = buffer.length / 4;
@@ -1037,6 +1053,7 @@ export class SplatMesh extends SplatGenerator {
           ? (this.context.lodIndices.value.image.data as Uint32Array)
           : null) ??
       null;
+    const detailedRaycast = indices != null;
 
     if (!ext) {
       const packed = paged
@@ -1066,25 +1083,50 @@ export class SplatMesh extends SplatGenerator {
           }
         }
 
-        const newIntersections = raycast_packed_buffer(
-          origin.x,
-          origin.y,
-          origin.z,
-          direction.x,
-          direction.y,
-          direction.z,
-          this.minRaycastOpacity,
-          near,
-          far,
-          count,
-          splatEncoding?.lnScaleMin ?? LN_SCALE_MIN,
-          splatEncoding?.lnScaleMax ?? LN_SCALE_MAX,
-          splatEncoding?.lodOpacity ?? false,
-        );
-        intersections = this.appendRaycastBuffer(
-          intersections,
-          newIntersections,
-        );
+        if (indices) {
+          this.pushDetailedRaycastIntersections(
+            pick_lod_packed_raycast_buffer(
+              indices.subarray(base, base + count),
+              count,
+              origin.x,
+              origin.y,
+              origin.z,
+              direction.x,
+              direction.y,
+              direction.z,
+              this.minRaycastOpacity,
+              near,
+              far,
+              splatEncoding?.lnScaleMin ?? LN_SCALE_MIN,
+              splatEncoding?.lnScaleMax ?? LN_SCALE_MAX,
+              splatEncoding?.lodOpacity ?? false,
+            ),
+            ray,
+            normalMatrix,
+            worldScaleFactor,
+            intersects,
+          );
+        } else {
+          const newIntersections = raycast_packed_buffer(
+            origin.x,
+            origin.y,
+            origin.z,
+            direction.x,
+            direction.y,
+            direction.z,
+            this.minRaycastOpacity,
+            near,
+            far,
+            count,
+            splatEncoding?.lnScaleMin ?? LN_SCALE_MIN,
+            splatEncoding?.lnScaleMax ?? LN_SCALE_MAX,
+            splatEncoding?.lodOpacity ?? false,
+          );
+          intersections = this.appendRaycastBuffer(
+            intersections,
+            newIntersections,
+          );
+        }
       }
     } else {
       const buffer2 = get_raycast_buffer2();
@@ -1122,23 +1164,49 @@ export class SplatMesh extends SplatGenerator {
           }
         }
 
-        const newIntersections = raycast_ext_buffers(
-          origin.x,
-          origin.y,
-          origin.z,
-          direction.x,
-          direction.y,
-          direction.z,
-          this.minRaycastOpacity,
-          near,
-          far,
-          count,
-        );
-        intersections = this.appendRaycastBuffer(
-          intersections,
-          newIntersections,
-        );
+        if (indices) {
+          this.pushDetailedRaycastIntersections(
+            pick_lod_ext_raycast_buffers(
+              indices.subarray(base, base + count),
+              count,
+              origin.x,
+              origin.y,
+              origin.z,
+              direction.x,
+              direction.y,
+              direction.z,
+              this.minRaycastOpacity,
+              near,
+              far,
+            ),
+            ray,
+            normalMatrix,
+            worldScaleFactor,
+            intersects,
+          );
+        } else {
+          const newIntersections = raycast_ext_buffers(
+            origin.x,
+            origin.y,
+            origin.z,
+            direction.x,
+            direction.y,
+            direction.z,
+            this.minRaycastOpacity,
+            near,
+            far,
+            count,
+          );
+          intersections = this.appendRaycastBuffer(
+            intersections,
+            newIntersections,
+          );
+        }
       }
+    }
+
+    if (detailedRaycast) {
+      return;
     }
 
     for (const distance of SplatMesh.raycastBuffer.subarray(0, intersections)) {
@@ -1150,6 +1218,237 @@ export class SplatMesh extends SplatGenerator {
         distance,
         point,
         object: this,
+      });
+    }
+  }
+
+  pickLod(
+    raycaster: THREE.Raycaster,
+    intersects: SplatIntersection[],
+    opts?: {
+      minRaycastOpacity?: number;
+    },
+  ) {
+    if (
+      !wasm.isInitialized() ||
+      !this.raycastable ||
+      (!this.packedSplats && !this.extSplats && !this.paged)
+    ) {
+      return;
+    }
+
+    const paged = this.paged != null;
+    const ext = paged
+      ? (this.paged?.pager?.extSplats ?? false)
+      : this.extSplats != null;
+
+    const lodSource = paged
+      ? this.paged
+      : ext
+        ? this.extSplats?.lodSplats
+        : this.packedSplats?.lodSplats;
+    const lodId = lodSource?.lodId;
+    const rootIndex = lodSource?.pickLodRoot ?? 0;
+
+    const packed = !ext
+      ? paged
+        ? (this.paged?.pager?.packedTexture.value.image.data as Uint32Array)
+        : this.packedSplats?.lodSplats?.packedArray
+      : undefined;
+    const ext1 = ext
+      ? paged
+        ? (this.paged?.pager?.packedTexture.value.image.data as Uint32Array)
+        : this.extSplats?.lodSplats?.extArrays[0]
+      : undefined;
+    const ext2 = ext
+      ? paged
+        ? (this.paged?.pager?.extTexture.value.image.data as Uint32Array)
+        : this.extSplats?.lodSplats?.extArrays[1]
+      : undefined;
+
+    if (lodId == null) {
+      this.raycast(raycaster, intersects);
+      return;
+    }
+
+    const splatEncoding = paged
+      ? this.paged?.splatEncoding
+      : this.packedSplats?.splatEncoding;
+    const { near, far, ray } = raycaster;
+    const worldToMesh = this.matrixWorld.clone().invert();
+    const worldToMeshRot = new THREE.Matrix3().setFromMatrix4(worldToMesh);
+    const origin = ray.origin.clone().applyMatrix4(worldToMesh);
+    const direction = ray.direction.clone().applyMatrix3(worldToMeshRot);
+    const normalMatrix = new THREE.Matrix3().getNormalMatrix(this.matrixWorld);
+    const worldScale = new THREE.Vector3().setFromMatrixScale(this.matrixWorld);
+    const worldScaleFactor = Math.max(worldScale.x, worldScale.y, worldScale.z);
+
+    let newIntersections: Float32Array;
+    try {
+      if (ext) {
+        if (!ext1 || !ext2) {
+          this.raycast(raycaster, intersects);
+          return;
+        }
+        newIntersections = pick_lod_ext_buffers(
+          lodId,
+          rootIndex,
+          ext1,
+          ext2,
+          origin.x,
+          origin.y,
+          origin.z,
+          direction.x,
+          direction.y,
+          direction.z,
+          opts?.minRaycastOpacity ?? this.minRaycastOpacity,
+          near,
+          far,
+        );
+      } else {
+        if (!packed) {
+          this.raycast(raycaster, intersects);
+          return;
+        }
+        newIntersections = pick_lod_packed_buffer(
+          lodId,
+          rootIndex,
+          packed,
+          origin.x,
+          origin.y,
+          origin.z,
+          direction.x,
+          direction.y,
+          direction.z,
+          opts?.minRaycastOpacity ?? this.minRaycastOpacity,
+          near,
+          far,
+          splatEncoding?.lnScaleMin ?? LN_SCALE_MIN,
+          splatEncoding?.lnScaleMax ?? LN_SCALE_MAX,
+          splatEncoding?.lodOpacity ?? false,
+        );
+      }
+    } catch {
+      this.raycast(raycaster, intersects);
+      return;
+    }
+
+    this.pushPickLodIntersections(
+      newIntersections,
+      ray,
+      normalMatrix,
+      worldScaleFactor,
+      intersects,
+    );
+  }
+
+  private pushDetailedRaycastIntersections(
+    newIntersections: Float32Array,
+    ray: THREE.Ray,
+    normalMatrix: THREE.Matrix3,
+    worldScaleFactor: number,
+    intersects: SplatIntersection[],
+  ) {
+    for (let i = 0; i + 8 < newIntersections.length; i += 9) {
+      const localPoint = new THREE.Vector3(
+        newIntersections[i + 2],
+        newIntersections[i + 3],
+        newIntersections[i + 4],
+      );
+      const point = localPoint.applyMatrix4(this.matrixWorld);
+      const distance = point.distanceTo(ray.origin);
+      const localNormal = new THREE.Vector3(
+        newIntersections[i + 5],
+        newIntersections[i + 6],
+        newIntersections[i + 7],
+      );
+      let worldNormal: THREE.Vector3 | null = null;
+      if (localNormal.lengthSq() > 1e-12) {
+        worldNormal = localNormal.applyMatrix3(normalMatrix);
+        if (worldNormal.lengthSq() > 1e-12) {
+          worldNormal.normalize();
+          if (worldNormal.dot(ray.direction) > 0) {
+            worldNormal.negate();
+          }
+        } else {
+          worldNormal = null;
+        }
+      }
+      const index = newIntersections[i + 1];
+      intersects.push({
+        distance,
+        point,
+        index,
+        object: this,
+        sparkHit: {
+          worldPoint: point.clone(),
+          worldNormal,
+          extras: {
+            splatIndex: index,
+            splatScale: newIntersections[i + 8] * worldScaleFactor,
+          },
+        },
+      });
+    }
+  }
+
+  private pushPickLodIntersections(
+    newIntersections: Float32Array,
+    ray: THREE.Ray,
+    normalMatrix: THREE.Matrix3,
+    worldScaleFactor: number,
+    intersects: SplatIntersection[],
+  ) {
+    for (let i = 0; i + 8 < newIntersections.length; i += 9) {
+      const localPoint = new THREE.Vector3(
+        newIntersections[i + 2],
+        newIntersections[i + 3],
+        newIntersections[i + 4],
+      );
+      const point = localPoint.applyMatrix4(this.matrixWorld);
+      const distance = point.distanceTo(ray.origin);
+      const localNormal = new THREE.Vector3(
+        newIntersections[i + 5],
+        newIntersections[i + 6],
+        newIntersections[i + 7],
+      );
+      let worldNormal: THREE.Vector3 | null = null;
+      if (localNormal.lengthSq() > 1e-12) {
+        const rawNormal = localNormal.applyMatrix3(normalMatrix);
+        if (rawNormal.lengthSq() > 1e-12) {
+          rawNormal.normalize();
+          if (!this.pickLodSmoothedNormal) {
+            this.pickLodSmoothedNormal = rawNormal.clone();
+          } else if (
+            this.pickLodSmoothedNormal.dot(rawNormal) < PICK_LOD_NORMAL_SNAP_COS
+          ) {
+            this.pickLodSmoothedNormal.copy(rawNormal);
+          } else {
+            this.pickLodSmoothedNormal
+              .multiplyScalar(1 - PICK_LOD_NORMAL_SMOOTH_ALPHA)
+              .addScaledVector(rawNormal, PICK_LOD_NORMAL_SMOOTH_ALPHA)
+              .normalize();
+          }
+          worldNormal = this.pickLodSmoothedNormal.clone();
+          if (worldNormal.dot(ray.direction) > 0) {
+            worldNormal.negate();
+          }
+        }
+      }
+      const index = newIntersections[i + 1];
+      intersects.push({
+        distance,
+        point,
+        index,
+        object: this,
+        sparkHit: {
+          worldPoint: point.clone(),
+          worldNormal,
+          extras: {
+            splatIndex: index,
+            nodeSize: newIntersections[i + 8] * worldScaleFactor,
+          },
+        },
       });
     }
   }

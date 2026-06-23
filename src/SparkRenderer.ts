@@ -1,3 +1,10 @@
+import {
+  dispose_lod_tree as disposeMainLodTree,
+  init_lod_tree as initMainLodTree,
+  new_lod_tree as newMainLodTree,
+  new_shared_lod_tree as newMainSharedLodTree,
+  update_lod_trees as updateMainLodTrees,
+} from "spark-rs";
 import * as THREE from "three";
 import {
   ExtSplats,
@@ -1253,6 +1260,12 @@ export class SparkRenderer extends THREE.Mesh {
         const { lodId } = (await worker.call("newLodTree", {
           capacity: this.pager.maxSplats,
         })) as { lodId: number };
+        const { lodId: mainLodId } = newMainLodTree(this.pager.maxSplats) as {
+          lodId: number;
+        };
+        if (mainLodId !== lodId) {
+          throw new Error("Main-thread LoD tree id mismatch");
+        }
         this.pagerId = lodId;
       }
 
@@ -1286,6 +1299,7 @@ export class SparkRenderer extends THREE.Mesh {
           if (record) {
             if (lodTree && chunk === 0) {
               record.rootPage = page;
+              splats.pickLodRoot = page * this.pager.pageSplats;
             }
             this.lodUpdates.push({
               lodId: record.lodId,
@@ -1301,6 +1315,7 @@ export class SparkRenderer extends THREE.Mesh {
       if (this.lodUpdates.length > 0) {
         const lodUpdates = this.lodUpdates;
         this.lodUpdates = [];
+        this.updateMainLodTrees(lodUpdates);
         await worker.call("updateLodTrees", { ranges: lodUpdates });
         this.lodDirty = true;
       }
@@ -1346,10 +1361,20 @@ export class SparkRenderer extends THREE.Mesh {
     splats: PackedSplats | ExtSplats | PagedSplats,
   ) {
     if (splats instanceof PackedSplats || splats instanceof ExtSplats) {
+      const lodTree = (splats.extra.lodTree as Uint32Array).slice();
       const { lodId } = (await worker.call("initLodTree", {
         numSplats: splats.numSplats ?? 0,
-        lodTree: (splats.extra.lodTree as Uint32Array).slice(),
+        lodTree: lodTree.slice(),
       })) as { lodId: number };
+      const { lodId: mainLodId } = initMainLodTree(
+        splats.numSplats ?? 0,
+        lodTree,
+      ) as { lodId: number };
+      if (mainLodId !== lodId) {
+        throw new Error("Main-thread LoD tree id mismatch");
+      }
+      splats.lodId = lodId;
+      splats.pickLodRoot = 0;
       this.lodIds.set(splats, { lodId, lastTouched: performance.now() });
       this.lodIdToSplats.set(lodId, splats);
       // console.log("*** initLodTree", lodId, splats.extra.lodTree, splats);
@@ -1357,10 +1382,36 @@ export class SparkRenderer extends THREE.Mesh {
       const { lodId } = (await worker.call("newSharedLodTree", {
         lodId: this.pagerId,
       })) as { lodId: number };
+      const { lodId: mainLodId } = newMainSharedLodTree(this.pagerId) as {
+        lodId: number;
+      };
+      if (mainLodId !== lodId) {
+        throw new Error("Main-thread LoD tree id mismatch");
+      }
+      splats.lodId = lodId;
       this.lodIds.set(splats, { lodId, lastTouched: performance.now() });
       this.lodIdToSplats.set(lodId, splats);
       // console.log("*** newSharedLodTree", lodId, this.pagerId, splats);
     }
+  }
+
+  private updateMainLodTrees(
+    ranges: {
+      lodId: number;
+      pageBase: number;
+      chunkBase: number;
+      count: number;
+      lodTreeData?: Uint32Array;
+    }[],
+  ) {
+    const lodIds = new Uint32Array(ranges.map(({ lodId }) => lodId));
+    const pageBases = new Uint32Array(ranges.map(({ pageBase }) => pageBase));
+    const chunkBases = new Uint32Array(
+      ranges.map(({ chunkBase }) => chunkBase),
+    );
+    const counts = new Uint32Array(ranges.map(({ count }) => count));
+    const lodTreeData = ranges.map(({ lodTreeData }) => lodTreeData);
+    updateMainLodTrees(lodIds, pageBases, chunkBases, counts, lodTreeData);
   }
 
   private pageSizeWarning = false;
@@ -1564,6 +1615,8 @@ export class SparkRenderer extends THREE.Mesh {
 
     this.lodIds.delete(oldest.splats);
     this.lodIdToSplats.delete(oldest.lodId);
+    oldest.splats.lodId = undefined;
+    oldest.splats.pickLodRoot = undefined;
 
     for (const [mesh, instance] of this.lodInstances.entries()) {
       if (instance.lodId === oldest.lodId) {
@@ -1577,6 +1630,7 @@ export class SparkRenderer extends THREE.Mesh {
     }
 
     await worker.call("disposeLodTree", { lodId: oldest.lodId });
+    disposeMainLodTree(oldest.lodId);
     // console.log("disposed lodTree", oldest.lodId);
   }
 

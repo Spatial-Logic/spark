@@ -30,6 +30,8 @@ export declare class ExtSplats implements SplatSource {
     lod?: boolean | "quality";
     nonLod?: boolean;
     lodSplats?: ExtSplats;
+    lodId?: number;
+    pickLodRoot?: number;
     initialized: Promise<ExtSplats>;
     isInitialized: boolean;
     textures: [THREE.DataArrayTexture, THREE.DataArrayTexture];

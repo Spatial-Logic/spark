@@ -35,6 +35,8 @@ export declare class PackedSplats implements SplatSource {
     lod?: boolean | "quality";
     nonLod?: boolean;
     lodSplats?: PackedSplats;
+    lodId?: number;
+    pickLodRoot?: number;
     initialized: Promise<PackedSplats>;
     isInitialized: boolean;
     target: THREE.WebGLArrayRenderTarget | null;

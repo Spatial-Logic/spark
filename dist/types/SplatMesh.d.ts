@@ -8,6 +8,17 @@ import { SplatSkinning } from './SplatSkinning';
 import { SplatEncoding, SplatFileType } from './defines';
 import { DynoBool, DynoFloat, DynoInt, DynoUsampler2D, DynoVal, DynoVec4, Gsplat } from './dyno';
 import * as THREE from "three";
+type SplatIntersection = {
+    distance: number;
+    point: THREE.Vector3;
+    object: THREE.Object3D;
+    index?: number;
+    sparkHit?: {
+        worldPoint: THREE.Vector3;
+        worldNormal: THREE.Vector3 | null;
+        extras: Record<string, unknown>;
+    };
+};
 export type SplatMeshOptions = {
     url?: string;
     fileBytes?: Uint8Array | ArrayBuffer;
@@ -128,6 +139,7 @@ export declare class SplatMesh extends SplatGenerator {
         numSplats: number;
         indices: Uint32Array;
     };
+    private pickLodSmoothedNormal;
     rgbaDisplaceEdits: SplatEdits | null;
     splatRgba: RgbaArray | null;
     maxSh: number;
@@ -141,10 +153,7 @@ export declare class SplatMesh extends SplatGenerator {
     showLodPageDyno: DynoInt<string>;
     constructor(options?: SplatMeshOptions);
     asyncInitialize(options: SplatMeshOptions): Promise<void>;
-    static staticInitialized: Promise<void>;
-    static isStaticInitialized: boolean;
     static dynoTime: DynoFloat<"value">;
-    static staticInitialize(): Promise<void>;
     pushSplat(center: THREE.Vector3, scales: THREE.Vector3, quaternion: THREE.Quaternion, opacity: number, color: THREE.Color): void;
     forEachSplat(callback: (index: number, center: THREE.Vector3, scales: THREE.Vector3, quaternion: THREE.Quaternion, opacity: number, color: THREE.Color) => void): void;
     dispose(): void;
@@ -155,11 +164,12 @@ export declare class SplatMesh extends SplatGenerator {
     constructCovGenerator(context: SplatMeshContext): void;
     updateGenerator(): void;
     update({ renderer, time, deltaTime, viewToWorld, camera, renderSize, globalEdits, lodIndices, }: FrameUpdateContext): void;
-    raycast(raycaster: THREE.Raycaster, intersects: {
-        distance: number;
-        point: THREE.Vector3;
-        object: THREE.Object3D;
-    }[]): void;
+    raycast(raycaster: THREE.Raycaster, intersects: SplatIntersection[]): void;
+    pickLod(raycaster: THREE.Raycaster, intersects: SplatIntersection[], opts?: {
+        minRaycastOpacity?: number;
+    }): void;
+    private pushDetailedRaycastIntersections;
+    private pushPickLodIntersections;
     static raycastBuffer: Float32Array<ArrayBuffer>;
     private appendRaycastBuffer;
     createLodSplats({ rgbaArray, quality, }?: {
@@ -170,3 +180,4 @@ export declare class SplatMesh extends SplatGenerator {
 export declare function maybeLookupIndex(lodIndices: DynoUsampler2D<"lodIndices", THREE.DataTexture>, index: DynoVal<"int">, numSplats: DynoVal<"int">, enableLod: DynoVal<"bool">, showLodPage: DynoVal<"int">): DynoVal<"int">;
 export declare function maybeInjectSplatRgba(gsplat: DynoVal<typeof Gsplat>, rgba: DynoVal<typeof TRgbaArray>, index: DynoVal<"int">, enableLod: DynoVal<"bool">): DynoVal<typeof Gsplat>;
 export declare const emptyLodIndices: THREE.DataTexture;
+export {};

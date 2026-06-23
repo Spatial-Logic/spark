@@ -54,6 +54,8 @@ export class PagedSplats implements SplatSource {
 
   numSplats: number;
   splatEncoding?: SplatEncoding;
+  lodId?: number;
+  pickLodRoot?: number;
   radMetaPromise?: Promise<{ meta: RadMeta; chunksStart: number }>;
 
   dynoNumSplats: dyno.DynoInt<"numSplats">;

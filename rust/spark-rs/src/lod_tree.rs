@@ -6,9 +6,14 @@ use half::f16;
 use itertools::izip;
 use js_sys::{Array, Object, Reflect, Uint32Array};
 use ordered_float::OrderedFloat;
+use spark_lib::decoder::SplatEncoding;
 use wasm_bindgen::prelude::*;
 
+use crate::raycast::{raycast_ext_ellipsoid, raycast_packed_ellipsoid};
+
 const MAX_SPLAT_CHUNK: usize = 65536;
+const INTERNAL_NODE_SLACK: f32 = 4.0;
+const LEAF_NODE_SLACK: f32 = 8.0;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
@@ -365,6 +370,493 @@ fn is_resident(index: u32, instance: &LodInstance) -> bool {
         false
     } else {
         instance.chunk_to_page[chunk] != 0xFFFFFFFF
+    }
+}
+
+fn resident_packed_index(index: u32, chunk_to_page: &[u32]) -> Option<u32> {
+    let chunk = (index >> 16) as usize;
+    let page = *chunk_to_page.get(chunk)?;
+    if page == 0xFFFFFFFF {
+        None
+    } else {
+        Some((page << 16) | (index & 0xffff))
+    }
+}
+
+fn child_range_resident(child_count: u16, child_start: u32, chunk_to_page: &[u32]) -> bool {
+    if child_count == 0 {
+        return true;
+    }
+
+    let first_chunk = (child_start >> 16) as usize;
+    let last_chunk = ((child_start + child_count as u32 - 1) >> 16) as usize;
+    if last_chunk >= chunk_to_page.len() {
+        return false;
+    }
+
+    chunk_to_page[first_chunk] != 0xFFFFFFFF && chunk_to_page[last_chunk] != 0xFFFFFFFF
+}
+
+fn ray_sphere_check(
+    origin: [f32; 3],
+    dir: [f32; 3],
+    near: f32,
+    center: [f32; 3],
+    radius: f32,
+) -> Option<f32> {
+    let oc = [
+        center[0] - origin[0],
+        center[1] - origin[1],
+        center[2] - origin[2],
+    ];
+    let dot_dir = dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2];
+    if dot_dir < 1e-12 {
+        return None;
+    }
+    let dot_oc = oc[0] * dir[0] + oc[1] * dir[1] + oc[2] * dir[2];
+    let t = dot_oc / dot_dir;
+    if t < near - radius && t < -radius {
+        return None;
+    }
+    let closest = [
+        origin[0] + t * dir[0] - center[0],
+        origin[1] + t * dir[1] - center[1],
+        origin[2] + t * dir[2] - center[2],
+    ];
+    let dist_sq = closest[0] * closest[0] + closest[1] * closest[1] + closest[2] * closest[2];
+    if dist_sq <= radius * radius {
+        Some(t)
+    } else {
+        None
+    }
+}
+
+fn ray_might_hit_splat(
+    origin: [f32; 3],
+    dir: [f32; 3],
+    near: f32,
+    far: f32,
+    splat: &LodSplat,
+    slack: f32,
+) -> bool {
+    let size = splat.size();
+    if size <= 0.0 {
+        return true;
+    }
+    match ray_sphere_check(origin, dir, near, splat.center().to_array(), size * slack) {
+        Some(t) => t <= far + size * slack,
+        None => false,
+    }
+}
+
+fn raycast_packed_index_hit(
+    packed_splats: &Uint32Array,
+    packed_index: u32,
+    origin: [f32; 3],
+    dir: [f32; 3],
+    min_opacity: f32,
+    near: f32,
+    far: f32,
+    encoding: &SplatEncoding,
+) -> Option<[f32; 8]> {
+    let packed_offset = packed_index.saturating_mul(4);
+    if packed_offset + 4 > packed_splats.length() {
+        return None;
+    }
+
+    let packed = [
+        packed_splats.get_index(packed_offset),
+        packed_splats.get_index(packed_offset + 1),
+        packed_splats.get_index(packed_offset + 2),
+        packed_splats.get_index(packed_offset + 3),
+    ];
+    raycast_packed_ellipsoid(&packed, origin, dir, min_opacity, near, far, encoding).map(|hit| [
+        hit.t,
+        packed_index as f32,
+        hit.point[0],
+        hit.point[1],
+        hit.point[2],
+        hit.normal[0],
+        hit.normal[1],
+        hit.normal[2],
+    ])
+}
+
+fn raycast_packed_index(
+    packed_splats: &Uint32Array,
+    packed_index: u32,
+    hits: &mut Vec<f32>,
+    origin: [f32; 3],
+    dir: [f32; 3],
+    min_opacity: f32,
+    near: f32,
+    far: f32,
+    encoding: &SplatEncoding,
+) {
+    if let Some(hit) = raycast_packed_index_hit(
+        packed_splats,
+        packed_index,
+        origin,
+        dir,
+        min_opacity,
+        near,
+        far,
+        encoding,
+    ) {
+        hits.extend_from_slice(&hit);
+    }
+}
+
+fn raycast_ext_index_hit(
+    ext_splats: &Uint32Array,
+    ext_splats2: &Uint32Array,
+    packed_index: u32,
+    origin: [f32; 3],
+    dir: [f32; 3],
+    min_opacity: f32,
+    near: f32,
+    far: f32,
+) -> Option<[f32; 8]> {
+    let packed_offset = packed_index.saturating_mul(4);
+    if packed_offset + 4 > ext_splats.length() || packed_offset + 4 > ext_splats2.length() {
+        return None;
+    }
+
+    let ext_a = [
+        ext_splats.get_index(packed_offset),
+        ext_splats.get_index(packed_offset + 1),
+        ext_splats.get_index(packed_offset + 2),
+        ext_splats.get_index(packed_offset + 3),
+    ];
+    let ext_b = [
+        ext_splats2.get_index(packed_offset),
+        ext_splats2.get_index(packed_offset + 1),
+        ext_splats2.get_index(packed_offset + 2),
+        ext_splats2.get_index(packed_offset + 3),
+    ];
+    raycast_ext_ellipsoid(&ext_a, &ext_b, origin, dir, min_opacity, near, far).map(|hit| [
+        hit.t,
+        packed_index as f32,
+        hit.point[0],
+        hit.point[1],
+        hit.point[2],
+        hit.normal[0],
+        hit.normal[1],
+        hit.normal[2],
+    ])
+}
+
+fn raycast_ext_index(
+    ext_splats: &Uint32Array,
+    ext_splats2: &Uint32Array,
+    packed_index: u32,
+    hits: &mut Vec<f32>,
+    origin: [f32; 3],
+    dir: [f32; 3],
+    min_opacity: f32,
+    near: f32,
+    far: f32,
+) {
+    if let Some(hit) = raycast_ext_index_hit(
+        ext_splats,
+        ext_splats2,
+        packed_index,
+        origin,
+        dir,
+        min_opacity,
+        near,
+        far,
+    ) {
+        hits.extend_from_slice(&hit);
+    }
+}
+
+enum PickBuffers<'a> {
+    Packed {
+        packed_splats: &'a Uint32Array,
+        encoding: &'a SplatEncoding,
+    },
+    Ext {
+        ext_splats: &'a Uint32Array,
+        ext_splats2: &'a Uint32Array,
+    },
+}
+
+fn raycast_pick_index_hit(
+    buffers: &PickBuffers,
+    packed_index: u32,
+    origin: [f32; 3],
+    dir: [f32; 3],
+    min_opacity: f32,
+    near: f32,
+    far: f32,
+) -> Option<[f32; 8]> {
+    match buffers {
+        PickBuffers::Packed { packed_splats, encoding } => {
+            raycast_packed_index_hit(
+                packed_splats,
+                packed_index,
+                origin,
+                dir,
+                min_opacity,
+                near,
+                far,
+                encoding,
+            )
+        }
+        PickBuffers::Ext { ext_splats, ext_splats2 } => {
+            raycast_ext_index_hit(
+                ext_splats,
+                ext_splats2,
+                packed_index,
+                origin,
+                dir,
+                min_opacity,
+                near,
+                far,
+            )
+        }
+    }
+}
+
+fn with_node_size(hit: [f32; 8], node_size: f32) -> [f32; 9] {
+    [
+        hit[0],
+        hit[1],
+        hit[2],
+        hit[3],
+        hit[4],
+        hit[5],
+        hit[6],
+        hit[7],
+        node_size,
+    ]
+}
+
+fn pick_lod_tree(
+    lod_id: u32,
+    root_index: u32,
+    buffers: PickBuffers,
+    hits: &mut Vec<f32>,
+    origin: [f32; 3],
+    dir: [f32; 3],
+    min_opacity: f32,
+    near: f32,
+    far: f32,
+) -> Result<(), JsValue> {
+    STATE.with_borrow(|state| {
+        let lod_tree = state
+            .lod_trees
+            .get(&lod_id)
+            .ok_or_else(|| JsValue::from_str("Invalid lod_id"))?;
+        let splats = lod_tree.splats.borrow();
+        if root_index as usize >= splats.len() {
+            return Ok(());
+        }
+
+        let mut stack = Vec::with_capacity(512);
+        stack.push(root_index);
+        let mut best_t = far;
+        let mut best_hit: Option<[f32; 9]> = None;
+
+        while let Some(index) = stack.pop() {
+            let Some(splat) = splats.get(index as usize) else {
+                continue;
+            };
+
+            if splat.child_count > 0 {
+                if !ray_might_hit_splat(origin, dir, near, best_t, splat, INTERNAL_NODE_SLACK) {
+                    continue;
+                }
+
+                if !child_range_resident(
+                    splat.child_count,
+                    splat.child_start,
+                    &lod_tree.chunk_to_page,
+                ) {
+                    if let Some(hit) = raycast_pick_index_hit(
+                        &buffers,
+                        index,
+                        origin,
+                        dir,
+                        min_opacity,
+                        near,
+                        best_t,
+                    ) {
+                        if hit[0] < best_t {
+                            best_t = hit[0];
+                            best_hit = Some(with_node_size(hit, splat.size()));
+                        }
+                    }
+                    continue;
+                }
+
+                let mut children = Vec::with_capacity(splat.child_count as usize);
+                for child in splat.child_start..splat.child_start + splat.child_count as u32 {
+                    if let Some(paged_child) = resident_packed_index(child, &lod_tree.chunk_to_page) {
+                        if let Some(child_splat) = splats.get(paged_child as usize) {
+                            let slack = if child_splat.child_count > 0 {
+                                INTERNAL_NODE_SLACK
+                            } else {
+                                LEAF_NODE_SLACK
+                            };
+                            if !ray_might_hit_splat(origin, dir, near, best_t, child_splat, slack) {
+                                continue;
+                            }
+                            let radius = child_splat.size() * slack;
+                            let t = if radius > 0.0 {
+                                ray_sphere_check(
+                                    origin,
+                                    dir,
+                                    near,
+                                    child_splat.center().to_array(),
+                                    radius,
+                                ).unwrap_or(f32::INFINITY)
+                            } else {
+                                0.0
+                            };
+                            children.push((t, paged_child));
+                        }
+                    }
+                }
+                children.sort_unstable_by(|a, b| {
+                    b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal)
+                });
+                for (_, child) in children {
+                    stack.push(child);
+                }
+                continue;
+            }
+
+            if !ray_might_hit_splat(origin, dir, near, best_t, splat, LEAF_NODE_SLACK) {
+                continue;
+            }
+
+            if let Some(hit) = raycast_pick_index_hit(
+                &buffers,
+                index,
+                origin,
+                dir,
+                min_opacity,
+                near,
+                best_t,
+            ) {
+                if hit[0] < best_t {
+                    best_t = hit[0];
+                    best_hit = Some(with_node_size(hit, splat.size()));
+                }
+            }
+        }
+
+        if let Some(hit) = best_hit {
+            hits.extend_from_slice(&hit);
+        }
+
+        Ok(())
+    })
+}
+
+pub fn pick_lod_packed_tree(
+    lod_id: u32,
+    root_index: u32,
+    packed_splats: &Uint32Array,
+    hits: &mut Vec<f32>,
+    origin: [f32; 3],
+    dir: [f32; 3],
+    min_opacity: f32,
+    near: f32,
+    far: f32,
+    encoding: &SplatEncoding,
+) -> Result<(), JsValue> {
+    pick_lod_tree(
+        lod_id,
+        root_index,
+        PickBuffers::Packed { packed_splats, encoding },
+        hits,
+        origin,
+        dir,
+        min_opacity,
+        near,
+        far,
+    )
+}
+
+pub fn pick_lod_packed_indices(
+    packed_splats: &Uint32Array,
+    indices: &Uint32Array,
+    count: u32,
+    hits: &mut Vec<f32>,
+    origin: [f32; 3],
+    dir: [f32; 3],
+    min_opacity: f32,
+    near: f32,
+    far: f32,
+    encoding: &SplatEncoding,
+) {
+    for i in 0..count.min(indices.length()) {
+        raycast_packed_index(
+            packed_splats,
+            indices.get_index(i),
+            hits,
+            origin,
+            dir,
+            min_opacity,
+            near,
+            far,
+            encoding,
+        );
+    }
+}
+
+pub fn pick_lod_ext_tree(
+    lod_id: u32,
+    root_index: u32,
+    ext_splats: &Uint32Array,
+    ext_splats2: &Uint32Array,
+    hits: &mut Vec<f32>,
+    origin: [f32; 3],
+    dir: [f32; 3],
+    min_opacity: f32,
+    near: f32,
+    far: f32,
+) -> Result<(), JsValue> {
+    pick_lod_tree(
+        lod_id,
+        root_index,
+        PickBuffers::Ext { ext_splats, ext_splats2 },
+        hits,
+        origin,
+        dir,
+        min_opacity,
+        near,
+        far,
+    )
+}
+
+pub fn pick_lod_ext_indices(
+    ext_splats: &Uint32Array,
+    ext_splats2: &Uint32Array,
+    indices: &Uint32Array,
+    count: u32,
+    hits: &mut Vec<f32>,
+    origin: [f32; 3],
+    dir: [f32; 3],
+    min_opacity: f32,
+    near: f32,
+    far: f32,
+) {
+    for i in 0..count.min(indices.length()) {
+        raycast_ext_index(
+            ext_splats,
+            ext_splats2,
+            indices.get_index(i),
+            hits,
+            origin,
+            dir,
+            min_opacity,
+            near,
+            far,
+        );
     }
 }
 

@@ -203,4 +203,5 @@ export declare class GunzipReader {
     });
     read(numBytes: number): Promise<Uint8Array>;
 }
+export declare function uploadU32DataTextureRows(renderer: THREE.WebGLRenderer, texture: THREE.Texture, width: number, rows: number, data: Uint32Array): void;
 export {};

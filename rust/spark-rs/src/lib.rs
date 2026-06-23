@@ -21,6 +21,9 @@ mod packed_splats;
 mod ext_splats;
 
 mod lod_tree;
+use lod_tree::{
+    pick_lod_ext_indices, pick_lod_ext_tree, pick_lod_packed_indices, pick_lod_packed_tree,
+};
 
 #[wasm_bindgen(start)]
 pub fn wasm_start() {
@@ -518,6 +521,188 @@ pub fn raycast_packed_buffer(
             subbuffer, distances,
             [origin_x, origin_y, origin_z], [dir_x, dir_y, dir_z],
             min_opacity, near, far, &encoding,
+        );
+
+        unsafe { Float32Array::view(&distances) }
+    })
+}
+
+#[wasm_bindgen]
+pub fn pick_lod_packed_buffer(
+    lod_id: u32, root_index: u32, packed_splats: Uint32Array,
+    origin_x: f32, origin_y: f32, origin_z: f32,
+    dir_x: f32, dir_y: f32, dir_z: f32,
+    min_opacity: f32, near: f32, far: f32,
+    ln_scale_min: f32, ln_scale_max: f32, lod_opacity: bool,
+) -> Result<Float32Array, JsValue> {
+    RAYCAST_BUFFERS.with_borrow_mut(|(_, _, distances)| {
+        let encoding = SplatEncoding {
+            ln_scale_min,
+            ln_scale_max,
+            lod_opacity,
+            ..Default::default()
+        };
+
+        distances.clear();
+        pick_lod_packed_tree(
+            lod_id, root_index, &packed_splats, distances,
+            [origin_x, origin_y, origin_z], [dir_x, dir_y, dir_z],
+            min_opacity, near, far, &encoding,
+        )?;
+
+        Ok(unsafe { Float32Array::view(&distances) })
+    })
+}
+
+#[wasm_bindgen]
+pub fn pick_lod_packed_indices_buffer(
+    packed_splats: Uint32Array, indices: Uint32Array, count: u32,
+    origin_x: f32, origin_y: f32, origin_z: f32,
+    dir_x: f32, dir_y: f32, dir_z: f32,
+    min_opacity: f32, near: f32, far: f32,
+    ln_scale_min: f32, ln_scale_max: f32, lod_opacity: bool,
+) -> Float32Array {
+    RAYCAST_BUFFERS.with_borrow_mut(|(_, _, distances)| {
+        let encoding = SplatEncoding {
+            ln_scale_min,
+            ln_scale_max,
+            lod_opacity,
+            ..Default::default()
+        };
+
+        distances.clear();
+        pick_lod_packed_indices(
+            &packed_splats, &indices, count, distances,
+            [origin_x, origin_y, origin_z], [dir_x, dir_y, dir_z],
+            min_opacity, near, far, &encoding,
+        );
+
+        unsafe { Float32Array::view(&distances) }
+    })
+}
+
+#[wasm_bindgen]
+pub fn pick_lod_packed_raycast_buffer(
+    indices: Uint32Array, count: u32,
+    origin_x: f32, origin_y: f32, origin_z: f32,
+    dir_x: f32, dir_y: f32, dir_z: f32,
+    min_opacity: f32, near: f32, far: f32,
+    ln_scale_min: f32, ln_scale_max: f32, lod_opacity: bool,
+) -> Float32Array {
+    RAYCAST_BUFFERS.with_borrow_mut(|(buffer, _, distances)| {
+        let encoding = SplatEncoding {
+            ln_scale_min,
+            ln_scale_max,
+            lod_opacity,
+            ..Default::default()
+        };
+
+        distances.clear();
+        for i in 0..count as usize {
+            let i4 = i * 4;
+            if i4 + 4 > buffer.len() {
+                break;
+            }
+            if let Some(hit) = raycast::raycast_packed_ellipsoid(
+                &buffer[i4..i4 + 4],
+                [origin_x, origin_y, origin_z],
+                [dir_x, dir_y, dir_z],
+                min_opacity,
+                near,
+                far,
+                &encoding,
+            ) {
+                distances.extend_from_slice(&[
+                    hit.t,
+                    indices.get_index(i as u32) as f32,
+                    hit.point[0],
+                    hit.point[1],
+                    hit.point[2],
+                    hit.normal[0],
+                    hit.normal[1],
+                    hit.normal[2],
+                    hit.scale,
+                ]);
+            }
+        }
+
+        unsafe { Float32Array::view(&distances) }
+    })
+}
+
+#[wasm_bindgen]
+pub fn pick_lod_ext_buffers(
+    lod_id: u32, root_index: u32, ext_splats: Uint32Array, ext_splats2: Uint32Array,
+    origin_x: f32, origin_y: f32, origin_z: f32,
+    dir_x: f32, dir_y: f32, dir_z: f32,
+    min_opacity: f32, near: f32, far: f32,
+) -> Result<Float32Array, JsValue> {
+    RAYCAST_BUFFERS.with_borrow_mut(|(_, _, distances)| {
+        distances.clear();
+        pick_lod_ext_tree(
+            lod_id, root_index, &ext_splats, &ext_splats2, distances,
+            [origin_x, origin_y, origin_z], [dir_x, dir_y, dir_z],
+            min_opacity, near, far,
+        )?;
+
+        Ok(unsafe { Float32Array::view(&distances) })
+    })
+}
+
+#[wasm_bindgen]
+pub fn pick_lod_ext_raycast_buffers(
+    indices: Uint32Array, count: u32,
+    origin_x: f32, origin_y: f32, origin_z: f32,
+    dir_x: f32, dir_y: f32, dir_z: f32,
+    min_opacity: f32, near: f32, far: f32,
+) -> Float32Array {
+    RAYCAST_BUFFERS.with_borrow_mut(|(buffer, buffer2, distances)| {
+        distances.clear();
+        for i in 0..count as usize {
+            let i4 = i * 4;
+            if i4 + 4 > buffer.len() || i4 + 4 > buffer2.len() {
+                break;
+            }
+            if let Some(hit) = raycast::raycast_ext_ellipsoid(
+                &buffer[i4..i4 + 4],
+                &buffer2[i4..i4 + 4],
+                [origin_x, origin_y, origin_z],
+                [dir_x, dir_y, dir_z],
+                min_opacity,
+                near,
+                far,
+            ) {
+                distances.extend_from_slice(&[
+                    hit.t,
+                    indices.get_index(i as u32) as f32,
+                    hit.point[0],
+                    hit.point[1],
+                    hit.point[2],
+                    hit.normal[0],
+                    hit.normal[1],
+                    hit.normal[2],
+                    hit.scale,
+                ]);
+            }
+        }
+
+        unsafe { Float32Array::view(&distances) }
+    })
+}
+
+#[wasm_bindgen]
+pub fn pick_lod_ext_indices_buffers(
+    ext_splats: Uint32Array, ext_splats2: Uint32Array, indices: Uint32Array, count: u32,
+    origin_x: f32, origin_y: f32, origin_z: f32,
+    dir_x: f32, dir_y: f32, dir_z: f32,
+    min_opacity: f32, near: f32, far: f32,
+) -> Float32Array {
+    RAYCAST_BUFFERS.with_borrow_mut(|(_, _, distances)| {
+        distances.clear();
+        pick_lod_ext_indices(
+            &ext_splats, &ext_splats2, &indices, count, distances,
+            [origin_x, origin_y, origin_z], [dir_x, dir_y, dir_z],
+            min_opacity, near, far,
         );
 
         unsafe { Float32Array::view(&distances) }
