@@ -12,8 +12,8 @@ use wasm_bindgen::prelude::*;
 use crate::raycast::{raycast_ext_ellipsoid, raycast_packed_ellipsoid};
 
 const MAX_SPLAT_CHUNK: usize = 65536;
-const INTERNAL_NODE_SLACK: f32 = 4.0;
-const LEAF_NODE_SLACK: f32 = 8.0;
+const INTERNAL_NODE_SLACK: f32 = 3.0;
+const LEAF_NODE_SLACK: f32 = 4.0;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
