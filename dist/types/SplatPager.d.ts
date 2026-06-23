@@ -57,6 +57,9 @@ export declare class PagedSplats implements SplatSource {
     }): dyno.DynoVal<typeof dyno.Gsplat>;
     forEachSplat(callback: (index: number, center: THREE.Vector3, scales: THREE.Vector3, quaternion: THREE.Quaternion, opacity: number, color: THREE.Color) => void): void;
 }
+export interface LodTreeRegistry {
+    reregisterPagedLodTree(splats: PagedSplats, lodId: number): void;
+}
 export interface SplatPagerOptions {
     /**
      * THREE.WebGLRenderer instance to upload texture data
@@ -123,6 +126,8 @@ export declare class SplatPager {
     freeablePages: number[];
     newUploads: PageUpload[];
     readyUploads: PageUpload[];
+    pagerId: number;
+    lodRegistry?: LodTreeRegistry;
     pickBufferVersion: number;
     lodTreeUpdates: {
         splats: PagedSplats;

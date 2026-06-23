@@ -3,6 +3,7 @@ import * as THREE from "three";
 import {
   get_raycast_buffer,
   get_raycast_buffer2,
+  new_shared_lod_tree as newMainSharedLodTree,
   pick_lod_ext_buffers,
   pick_lod_ext_cached_buffers,
   pick_lod_packed_buffer,
@@ -1184,42 +1185,61 @@ export class SplatMesh extends SplatGenerator {
       return;
     }
 
-    const paged = this.paged != null;
-    const ext = paged
-      ? (this.paged?.pager?.extSplats ?? false)
+    const pagedSplats = this.paged;
+    const pager = pagedSplats?.pager;
+    const paged = pagedSplats != null;
+    const ext = pagedSplats
+      ? (pager?.extSplats ?? false)
       : this.extSplats != null;
 
-    const lodSource = paged
-      ? this.paged
+    const lodSource = pagedSplats
+      ? pagedSplats
       : ext
         ? this.extSplats?.lodSplats
         : this.packedSplats?.lodSplats;
-    const lodId = lodSource?.lodId;
-    const rootIndex = lodSource?.pickLodRoot ?? 0;
+    let lodId = lodSource?.lodId;
+    let rootIndex = lodSource?.pickLodRoot ?? 0;
 
     const packed = !ext
-      ? paged
-        ? (this.paged?.pager?.packedTexture.value.image.data as Uint32Array)
+      ? pagedSplats
+        ? (pager?.packedTexture.value.image.data as Uint32Array | undefined)
         : this.packedSplats?.lodSplats?.packedArray
       : undefined;
     const ext1 = ext
-      ? paged
-        ? (this.paged?.pager?.packedTexture.value.image.data as Uint32Array)
+      ? pagedSplats
+        ? (pager?.packedTexture.value.image.data as Uint32Array | undefined)
         : this.extSplats?.lodSplats?.extArrays[0]
       : undefined;
     const ext2 = ext
-      ? paged
-        ? (this.paged?.pager?.extTexture.value.image.data as Uint32Array)
+      ? pagedSplats
+        ? (pager?.extTexture.value.image.data as Uint32Array | undefined)
         : this.extSplats?.lodSplats?.extArrays[1]
       : undefined;
+
+    if (lodId == null && pagedSplats && pager) {
+      if (pager.pagerId !== 0) {
+        try {
+          const { lodId: newLodId } = newMainSharedLodTree(pager.pagerId) as {
+            lodId: number;
+          };
+          pagedSplats.lodId = newLodId;
+          pagedSplats.pickLodRoot = 0;
+          pager.lodRegistry?.reregisterPagedLodTree(pagedSplats, newLodId);
+          lodId = pagedSplats.lodId;
+          rootIndex = pagedSplats.pickLodRoot ?? 0;
+        } catch {
+          // Fall through to raycast below.
+        }
+      }
+    }
 
     if (lodId == null) {
       this.raycast(raycaster, intersects);
       return;
     }
 
-    const splatEncoding = paged
-      ? this.paged?.splatEncoding
+    const splatEncoding = pagedSplats
+      ? pagedSplats.splatEncoding
       : this.packedSplats?.splatEncoding;
     const { near, far, ray } = raycaster;
     const worldToMesh = this.matrixWorld.clone().invert();

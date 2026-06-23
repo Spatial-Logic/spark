@@ -473,6 +473,10 @@ export class PagedSplats implements SplatSource {
   }
 }
 
+export interface LodTreeRegistry {
+  reregisterPagedLodTree(splats: PagedSplats, lodId: number): void;
+}
+
 export interface SplatPagerOptions {
   /**
    * THREE.WebGLRenderer instance to upload texture data
@@ -541,6 +545,9 @@ export class SplatPager {
   freeablePages: number[];
   newUploads: PageUpload[];
   readyUploads: PageUpload[];
+  pagerId = 0;
+  lodRegistry?: LodTreeRegistry;
+  // pickBufferVersion no longer read by paged pickLod (zero-copy path).
   pickBufferVersion = 1;
   lodTreeUpdates: {
     splats: PagedSplats;

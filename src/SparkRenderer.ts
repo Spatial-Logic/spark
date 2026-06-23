@@ -1267,6 +1267,8 @@ export class SparkRenderer extends THREE.Mesh {
           throw new Error("Main-thread LoD tree id mismatch");
         }
         this.pagerId = lodId;
+        this.pager.pagerId = lodId;
+        this.pager.lodRegistry = this;
       }
 
       // Assign pager to any new meshes that don't have one yet
@@ -1393,6 +1395,11 @@ export class SparkRenderer extends THREE.Mesh {
       this.lodIdToSplats.set(lodId, splats);
       // console.log("*** newSharedLodTree", lodId, this.pagerId, splats);
     }
+  }
+
+  reregisterPagedLodTree(splats: PagedSplats, lodId: number) {
+    this.lodIds.set(splats, { lodId, lastTouched: performance.now() });
+    this.lodIdToSplats.set(lodId, splats);
   }
 
   private updateMainLodTrees(
@@ -1611,6 +1618,16 @@ export class SparkRenderer extends THREE.Mesh {
     }
     if (!oldest || oldest.lastTouched > now - DISPOSE_TIMEOUT_MS) {
       return;
+    }
+
+    for (const { mesh } of this.lodMeshes) {
+      if (
+        mesh.packedSplats?.lodSplats === oldest.splats ||
+        mesh.extSplats?.lodSplats === oldest.splats ||
+        mesh.paged === oldest.splats
+      ) {
+        return;
+      }
     }
 
     this.lodIds.delete(oldest.splats);

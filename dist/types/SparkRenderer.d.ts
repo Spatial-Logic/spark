@@ -518,6 +518,7 @@ export declare class SparkRenderer extends THREE.Mesh {
     defaultSplatTarget(): 500000 | 750000 | 1000000 | 1500000 | 2500000;
     private driveLod;
     private initLodTree;
+    reregisterPagedLodTree(splats: PagedSplats, lodId: number): void;
     private updateMainLodTrees;
     private pageSizeWarning;
     private updateLodInstances;

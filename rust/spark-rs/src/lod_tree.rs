@@ -1121,6 +1121,95 @@ pub fn traverse_lod_trees(
     })
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use spark_lib::splat_encode::encode_packed_splat;
+
+    const CHILD_INDEX: u32 = 65_536;
+    const TEST_LOD_ID: u32 = 42;
+    const TEST_SHARED_ID: u32 = 43;
+    const ORIGIN: [f32; 3] = [0.0, 0.0, -3.0];
+    const DIR: [f32; 3] = [0.0, 0.0, 1.0];
+
+    fn reset_state() {
+        STATE.with_borrow_mut(|state| {
+            *state = LodState::new();
+        });
+    }
+
+    fn synthetic_tree() -> LodTree {
+        let mut splats = vec![LodSplat::default(); CHILD_INDEX as usize + 1];
+        splats[0] = LodSplat::new(Vec3::ZERO, 4.0, CHILD_INDEX, 1);
+        splats[CHILD_INDEX as usize] = LodSplat::new(Vec3::ZERO, 2.0, 0, 0);
+        LodTree {
+            splats: Rc::new(RefCell::new(splats)),
+            page_to_chunk: vec![0, 1],
+            chunk_to_page: vec![0, 1],
+        }
+    }
+
+    fn packed_buffer(encoding: &SplatEncoding) -> Vec<u32> {
+        let mut packed = vec![0; (CHILD_INDEX as usize + 1) * 4];
+        encode_packed_splat(
+            &mut packed[(CHILD_INDEX as usize * 4)..(CHILD_INDEX as usize * 4 + 4)],
+            [0.0, 0.0, 0.0],
+            1.0,
+            [1.0, 1.0, 1.0],
+            [2.0, 2.0, 1.0],
+            [0.0, 0.0, 0.0, 1.0],
+            encoding,
+        );
+        packed
+    }
+
+    #[test]
+    fn shared_lod_tree_after_disposal_can_still_pick() {
+        reset_state();
+        let encoding = SplatEncoding::default();
+        let base_tree = synthetic_tree();
+        let shared_tree = LodTree {
+            splats: base_tree.splats.clone(),
+            page_to_chunk: Vec::with_capacity(base_tree.page_to_chunk.capacity()),
+            chunk_to_page: Vec::with_capacity(base_tree.chunk_to_page.capacity()),
+        };
+
+        STATE.with_borrow_mut(|state| {
+            state.lod_trees.insert(TEST_LOD_ID, base_tree.clone());
+            state.lod_trees.insert(TEST_SHARED_ID, shared_tree);
+            state.lod_trees.remove(&TEST_SHARED_ID);
+            let reinit_tree = LodTree {
+                splats: base_tree.splats.clone(),
+                page_to_chunk: Vec::with_capacity(base_tree.page_to_chunk.capacity()),
+                chunk_to_page: base_tree.chunk_to_page.clone(),
+            };
+            state.lod_trees.insert(TEST_SHARED_ID, reinit_tree);
+        });
+
+        let packed = packed_buffer(&encoding);
+        let mut hits = Vec::new();
+        STATE.with_borrow(|state| {
+            pick_lod_tree(
+                state.lod_trees.get(&TEST_SHARED_ID).unwrap(),
+                0,
+                PickBuffers::Packed {
+                    packed_splats: U32Buffer::Slice(&packed),
+                    encoding: &encoding,
+                },
+                &mut hits,
+                ORIGIN,
+                DIR,
+                0.01,
+                0.0,
+                10.0,
+            );
+        });
+
+        assert!(!hits.is_empty());
+    }
+
+}
+
 fn compute_pixel_scale<'a>(
     splat: &LodSplat,
     instance: &(u32, Ref<'a, Vec<LodSplat>>, &Vec<u32>, &Vec<u32>, Vec3A, Vec3A, f32, f32, f32, f32, f32),
