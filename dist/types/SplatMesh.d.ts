@@ -145,6 +145,7 @@ export declare class SplatMesh extends SplatGenerator {
     maxSh: number;
     enableLod?: boolean;
     lodScale: number;
+    pickLodPixelScaleLimit: number;
     behindFoveate?: number;
     coneFov0?: number;
     coneFov?: number;

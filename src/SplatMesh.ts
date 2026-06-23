@@ -322,6 +322,7 @@ export class SplatMesh extends SplatGenerator {
 
   enableLod?: boolean;
   lodScale: number;
+  pickLodPixelScaleLimit = 0.0;
   behindFoveate?: number;
   coneFov0?: number;
   coneFov?: number;
@@ -1271,6 +1272,11 @@ export class SplatMesh extends SplatGenerator {
             near,
             far,
             opts?.statsDryRun ?? false,
+            origin.x,
+            origin.y,
+            origin.z,
+            this.lodScale,
+            this.pickLodPixelScaleLimit,
           );
         } else {
           newIntersections = pick_lod_ext_buffers(
@@ -1288,6 +1294,11 @@ export class SplatMesh extends SplatGenerator {
             near,
             far,
             opts?.statsDryRun ?? false,
+            origin.x,
+            origin.y,
+            origin.z,
+            this.lodScale,
+            this.pickLodPixelScaleLimit,
           );
         }
       } else {
@@ -1313,6 +1324,11 @@ export class SplatMesh extends SplatGenerator {
             splatEncoding?.lnScaleMax ?? LN_SCALE_MAX,
             splatEncoding?.lodOpacity ?? false,
             opts?.statsDryRun ?? false,
+            origin.x,
+            origin.y,
+            origin.z,
+            this.lodScale,
+            this.pickLodPixelScaleLimit,
           );
         } else {
           newIntersections = pick_lod_packed_buffer(
@@ -1332,6 +1348,11 @@ export class SplatMesh extends SplatGenerator {
             splatEncoding?.lnScaleMax ?? LN_SCALE_MAX,
             splatEncoding?.lodOpacity ?? false,
             opts?.statsDryRun ?? false,
+            origin.x,
+            origin.y,
+            origin.z,
+            this.lodScale,
+            this.pickLodPixelScaleLimit,
           );
         }
       }

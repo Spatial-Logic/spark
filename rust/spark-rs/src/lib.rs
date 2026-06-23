@@ -1,5 +1,6 @@
 
 use std::cell::RefCell;
+use glam::Vec3A;
 use js_sys::{Array, Float32Array, Object, Reflect, Uint8Array, Uint16Array, Uint32Array};
 use spark_lib::decoder::{ChunkReceiver, MultiDecoder, SplatEncoding, SplatFileType, SplatGetter};
 use spark_lib::gsplat::GsplatArray as GsplatArrayInner;
@@ -535,6 +536,8 @@ pub fn pick_lod_packed_buffer(
     dir_x: f32, dir_y: f32, dir_z: f32,
     min_opacity: f32, near: f32, far: f32,
     ln_scale_min: f32, ln_scale_max: f32, lod_opacity: bool, dry_run: bool,
+    lod_cut_origin_x: f32, lod_cut_origin_y: f32, lod_cut_origin_z: f32,
+    lod_cut_lod_scale: f32, lod_cut_pixel_scale_limit: f32,
 ) -> Result<Float32Array, JsValue> {
     RAYCAST_BUFFERS.with_borrow_mut(|(_, _, distances)| {
         let encoding = SplatEncoding {
@@ -543,12 +546,21 @@ pub fn pick_lod_packed_buffer(
             lod_opacity,
             ..Default::default()
         };
+        let lod_cut = if lod_cut_pixel_scale_limit > 0.0 {
+            Some((
+                Vec3A::new(lod_cut_origin_x, lod_cut_origin_y, lod_cut_origin_z),
+                lod_cut_lod_scale,
+                lod_cut_pixel_scale_limit,
+            ))
+        } else {
+            None
+        };
 
         distances.clear();
         pick_lod_packed_tree(
             lod_id, root_index, &packed_splats, distances,
             [origin_x, origin_y, origin_z], [dir_x, dir_y, dir_z],
-            min_opacity, near, far, dry_run, &encoding,
+            min_opacity, near, far, dry_run, lod_cut, &encoding,
         )?;
 
         Ok(unsafe { Float32Array::view(&distances) })
@@ -562,6 +574,8 @@ pub fn pick_lod_packed_cached_buffer(
     dir_x: f32, dir_y: f32, dir_z: f32,
     min_opacity: f32, near: f32, far: f32,
     ln_scale_min: f32, ln_scale_max: f32, lod_opacity: bool, dry_run: bool,
+    lod_cut_origin_x: f32, lod_cut_origin_y: f32, lod_cut_origin_z: f32,
+    lod_cut_lod_scale: f32, lod_cut_pixel_scale_limit: f32,
 ) -> Result<Float32Array, JsValue> {
     RAYCAST_BUFFERS.with_borrow_mut(|(_, _, distances)| {
         let encoding = SplatEncoding {
@@ -570,12 +584,21 @@ pub fn pick_lod_packed_cached_buffer(
             lod_opacity,
             ..Default::default()
         };
+        let lod_cut = if lod_cut_pixel_scale_limit > 0.0 {
+            Some((
+                Vec3A::new(lod_cut_origin_x, lod_cut_origin_y, lod_cut_origin_z),
+                lod_cut_lod_scale,
+                lod_cut_pixel_scale_limit,
+            ))
+        } else {
+            None
+        };
 
         distances.clear();
         pick_lod_packed_cached_tree(
             lod_id, root_index, distances,
             [origin_x, origin_y, origin_z], [dir_x, dir_y, dir_z],
-            min_opacity, near, far, dry_run, &encoding,
+            min_opacity, near, far, dry_run, lod_cut, &encoding,
         )?;
 
         Ok(unsafe { Float32Array::view(&distances) })
@@ -588,13 +611,25 @@ pub fn pick_lod_ext_buffers(
     origin_x: f32, origin_y: f32, origin_z: f32,
     dir_x: f32, dir_y: f32, dir_z: f32,
     min_opacity: f32, near: f32, far: f32, dry_run: bool,
+    lod_cut_origin_x: f32, lod_cut_origin_y: f32, lod_cut_origin_z: f32,
+    lod_cut_lod_scale: f32, lod_cut_pixel_scale_limit: f32,
 ) -> Result<Float32Array, JsValue> {
     RAYCAST_BUFFERS.with_borrow_mut(|(_, _, distances)| {
+        let lod_cut = if lod_cut_pixel_scale_limit > 0.0 {
+            Some((
+                Vec3A::new(lod_cut_origin_x, lod_cut_origin_y, lod_cut_origin_z),
+                lod_cut_lod_scale,
+                lod_cut_pixel_scale_limit,
+            ))
+        } else {
+            None
+        };
         distances.clear();
         pick_lod_ext_tree(
             lod_id, root_index, &ext_splats, &ext_splats2, distances,
             [origin_x, origin_y, origin_z], [dir_x, dir_y, dir_z],
             min_opacity, near, far, dry_run,
+            lod_cut,
         )?;
 
         Ok(unsafe { Float32Array::view(&distances) })
@@ -607,13 +642,25 @@ pub fn pick_lod_ext_cached_buffers(
     origin_x: f32, origin_y: f32, origin_z: f32,
     dir_x: f32, dir_y: f32, dir_z: f32,
     min_opacity: f32, near: f32, far: f32, dry_run: bool,
+    lod_cut_origin_x: f32, lod_cut_origin_y: f32, lod_cut_origin_z: f32,
+    lod_cut_lod_scale: f32, lod_cut_pixel_scale_limit: f32,
 ) -> Result<Float32Array, JsValue> {
     RAYCAST_BUFFERS.with_borrow_mut(|(_, _, distances)| {
+        let lod_cut = if lod_cut_pixel_scale_limit > 0.0 {
+            Some((
+                Vec3A::new(lod_cut_origin_x, lod_cut_origin_y, lod_cut_origin_z),
+                lod_cut_lod_scale,
+                lod_cut_pixel_scale_limit,
+            ))
+        } else {
+            None
+        };
         distances.clear();
         pick_lod_ext_cached_tree(
             lod_id, root_index, distances,
             [origin_x, origin_y, origin_z], [dir_x, dir_y, dir_z],
             min_opacity, near, far, dry_run,
+            lod_cut,
         )?;
 
         Ok(unsafe { Float32Array::view(&distances) })

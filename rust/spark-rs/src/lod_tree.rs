@@ -12,8 +12,8 @@ use wasm_bindgen::prelude::*;
 use crate::raycast::{raycast_ext_ellipsoid, raycast_packed_ellipsoid};
 
 const MAX_SPLAT_CHUNK: usize = 65536;
-const INTERNAL_NODE_SLACK: f32 = 3.0;
-const LEAF_NODE_SLACK: f32 = 4.0;
+const INTERNAL_NODE_SLACK: f32 = 4.0;
+const LEAF_NODE_SLACK: f32 = 8.0;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
@@ -646,6 +646,7 @@ fn pick_lod_tree(
     near: f32,
     far: f32,
     dry_run: bool,
+    lod_cut: Option<(Vec3A, f32, f32)>,
 ) {
         PICK_STATS.with_borrow_mut(|s| {
             *s = PickStats::default();
@@ -701,6 +702,33 @@ fn pick_lod_tree(
                         }
                     }
                     continue;
+                }
+
+                if let Some((cam_origin, lod_scale, pixel_scale_limit)) = lod_cut.as_ref() {
+                    let center = splat.center();
+                    let delta = center - *cam_origin;
+                    let distance = delta.length().max(1.0e-6);
+                    let pixel_scale = splat.size() / distance * *lod_scale;
+                    if pixel_scale <= *pixel_scale_limit {
+                        PICK_STATS.with_borrow_mut(|s| s.proxy_tests += 1);
+                        if !dry_run {
+                            if let Some(hit) = raycast_pick_index_hit(
+                                &buffers,
+                                index,
+                                origin,
+                                dir,
+                                min_opacity,
+                                near,
+                                best_t,
+                            ) {
+                                if hit[0] < best_t {
+                                    best_t = hit[0];
+                                    best_hit = Some(hit);
+                                }
+                            }
+                        }
+                        continue;
+                    }
                 }
 
                 CHILDREN_SCRATCH.with_borrow_mut(|children| {
@@ -784,6 +812,7 @@ pub fn pick_lod_packed_tree(
     near: f32,
     far: f32,
     dry_run: bool,
+    lod_cut: Option<(Vec3A, f32, f32)>,
     encoding: &SplatEncoding,
 ) -> Result<(), JsValue> {
     STATE.with_borrow(|state| {
@@ -802,6 +831,7 @@ pub fn pick_lod_packed_tree(
             near,
             far,
             dry_run,
+            lod_cut,
         );
         Ok(())
     })
@@ -819,6 +849,7 @@ pub fn pick_lod_ext_tree(
     near: f32,
     far: f32,
     dry_run: bool,
+    lod_cut: Option<(Vec3A, f32, f32)>,
 ) -> Result<(), JsValue> {
     STATE.with_borrow(|state| {
         let lod_tree = state
@@ -839,6 +870,7 @@ pub fn pick_lod_ext_tree(
             near,
             far,
             dry_run,
+            lod_cut,
         );
         Ok(())
     })
@@ -900,6 +932,7 @@ pub fn pick_lod_packed_cached_tree(
     near: f32,
     far: f32,
     dry_run: bool,
+    lod_cut: Option<(Vec3A, f32, f32)>,
     encoding: &SplatEncoding,
 ) -> Result<(), JsValue> {
     STATE.with_borrow(|state| {
@@ -925,6 +958,7 @@ pub fn pick_lod_packed_cached_tree(
             near,
             far,
             dry_run,
+            lod_cut,
         );
         Ok(())
     })
@@ -940,6 +974,7 @@ pub fn pick_lod_ext_cached_tree(
     near: f32,
     far: f32,
     dry_run: bool,
+    lod_cut: Option<(Vec3A, f32, f32)>,
 ) -> Result<(), JsValue> {
     STATE.with_borrow(|state| {
         let lod_tree = state
@@ -968,6 +1003,7 @@ pub fn pick_lod_ext_cached_tree(
             near,
             far,
             dry_run,
+            lod_cut,
         );
         Ok(())
     })
@@ -1261,8 +1297,23 @@ mod tests {
             0.0,
             10.0,
             false,
+            None,
         );
         hits
+    }
+
+    fn synthetic_lod_cut_tree() -> LodTree {
+        let mut splats = vec![LodSplat::default(); CHILD_INDEX as usize + 4];
+        splats[0] = LodSplat::new(Vec3::ZERO, 4.0, CHILD_INDEX, 4);
+        for child in 0..4usize {
+            splats[CHILD_INDEX as usize + child] =
+                LodSplat::new(Vec3::new(child as f32, 0.0, 0.0), 1.0, 0, 0);
+        }
+        LodTree {
+            splats: Rc::new(RefCell::new(splats)),
+            page_to_chunk: vec![0, 1],
+            chunk_to_page: vec![0, 1],
+        }
     }
 
     fn assert_hits_close(a: &[f32], b: &[f32]) {
@@ -1303,6 +1354,7 @@ mod tests {
             0.0,
             10.0,
             false,
+            None,
             &encoding,
         )
         .unwrap();
@@ -1351,10 +1403,40 @@ mod tests {
                 0.0,
                 10.0,
                 false,
+                None,
             );
         });
 
         assert!(!hits.is_empty());
+    }
+
+    #[test]
+    fn pick_lod_cut() {
+        reset_state();
+        let encoding = SplatEncoding::default();
+        let lod_tree = synthetic_lod_cut_tree();
+        let packed = packed_buffer(&encoding);
+        let mut hits = Vec::new();
+        pick_lod_tree(
+            &lod_tree,
+            0,
+            PickBuffers::Packed {
+                packed_splats: U32Buffer::Slice(&packed),
+                encoding: &encoding,
+            },
+            &mut hits,
+            ORIGIN,
+            DIR,
+            0.01,
+            0.0,
+            10.0,
+            true,
+            Some((Vec3A::from_array(ORIGIN), 1.0, 2.0)),
+        );
+
+        let stats = PICK_STATS.with_borrow(|s| s.clone());
+        assert!(stats.proxy_tests > 0, "expected proxy test from lod cut");
+        assert_eq!(stats.leaf_nodes_visited, 0, "expected no leaf visits");
     }
 
     #[test]

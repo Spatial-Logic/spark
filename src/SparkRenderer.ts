@@ -1209,6 +1209,10 @@ export class SparkRenderer extends THREE.Mesh {
         }) as SplatMesh[]);
     const hasPaged = lodMeshes.some((mesh) => mesh.paged);
 
+    for (const mesh of lodMeshes) {
+      mesh.pickLodPixelScaleLimit = pixelScaleLimit;
+    }
+
     if (this.lodMeshes.length !== lodMeshes.length) {
       this.lodDirty = true;
     } else {
