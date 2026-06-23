@@ -160,9 +160,17 @@ struct LodTree {
     chunk_to_page: Vec<u32>,
 }
 
+#[derive(Debug, Clone, Default)]
+struct PickBufferCache {
+    version: u32,
+    packed: Vec<u32>,
+    ext: Option<Vec<u32>>,
+}
+
 struct LodState {
     next_id: u32,
     lod_trees: AHashMap<u32, LodTree>,
+    pick_buffers: AHashMap<u32, PickBufferCache>,
     frontier: Frontier<(OrderedFloat<f32>, u32, u32)>,
     output: Vec<(u32, u32)>,
     touched: Vec<(u32, u32)>,
@@ -175,6 +183,7 @@ impl LodState {
         Self {
             next_id: 1000,
             lod_trees: AHashMap::new(),
+            pick_buffers: AHashMap::new(),
             frontier: Frontier::new(),
             output: Vec::new(),
             touched: Vec::new(),
@@ -287,6 +296,7 @@ pub fn init_lod_tree(num_splats: u32, lod_tree: Uint32Array) -> Result<Object, J
 pub fn dispose_lod_tree(lod_id: u32) {
     STATE.with_borrow_mut(|state| {
         state.lod_trees.remove(&lod_id);
+        state.pick_buffers.remove(&lod_id);
     })
 }
 
@@ -449,8 +459,36 @@ fn ray_might_hit_splat(
     }
 }
 
+enum U32Buffer<'a> {
+    Js(&'a Uint32Array),
+    Slice(&'a [u32]),
+}
+
+impl U32Buffer<'_> {
+    fn get4(&self, offset: u32) -> Option<[u32; 4]> {
+        match self {
+            U32Buffer::Js(array) => {
+                if offset + 4 > array.length() {
+                    return None;
+                }
+                Some([
+                    array.get_index(offset),
+                    array.get_index(offset + 1),
+                    array.get_index(offset + 2),
+                    array.get_index(offset + 3),
+                ])
+            }
+            U32Buffer::Slice(slice) => {
+                let offset = offset as usize;
+                let data = slice.get(offset..offset + 4)?;
+                Some([data[0], data[1], data[2], data[3]])
+            }
+        }
+    }
+}
+
 fn raycast_packed_index_hit(
-    packed_splats: &Uint32Array,
+    packed_splats: &U32Buffer,
     packed_index: u32,
     origin: [f32; 3],
     dir: [f32; 3],
@@ -460,16 +498,7 @@ fn raycast_packed_index_hit(
     encoding: &SplatEncoding,
 ) -> Option<[f32; 8]> {
     let packed_offset = packed_index.saturating_mul(4);
-    if packed_offset + 4 > packed_splats.length() {
-        return None;
-    }
-
-    let packed = [
-        packed_splats.get_index(packed_offset),
-        packed_splats.get_index(packed_offset + 1),
-        packed_splats.get_index(packed_offset + 2),
-        packed_splats.get_index(packed_offset + 3),
-    ];
+    let packed = packed_splats.get4(packed_offset)?;
     raycast_packed_ellipsoid(&packed, origin, dir, min_opacity, near, far, encoding).map(|hit| [
         hit.t,
         packed_index as f32,
@@ -483,8 +512,8 @@ fn raycast_packed_index_hit(
 }
 
 fn raycast_ext_index_hit(
-    ext_splats: &Uint32Array,
-    ext_splats2: &Uint32Array,
+    ext_splats: &U32Buffer,
+    ext_splats2: &U32Buffer,
     packed_index: u32,
     origin: [f32; 3],
     dir: [f32; 3],
@@ -493,22 +522,8 @@ fn raycast_ext_index_hit(
     far: f32,
 ) -> Option<[f32; 8]> {
     let packed_offset = packed_index.saturating_mul(4);
-    if packed_offset + 4 > ext_splats.length() || packed_offset + 4 > ext_splats2.length() {
-        return None;
-    }
-
-    let ext_a = [
-        ext_splats.get_index(packed_offset),
-        ext_splats.get_index(packed_offset + 1),
-        ext_splats.get_index(packed_offset + 2),
-        ext_splats.get_index(packed_offset + 3),
-    ];
-    let ext_b = [
-        ext_splats2.get_index(packed_offset),
-        ext_splats2.get_index(packed_offset + 1),
-        ext_splats2.get_index(packed_offset + 2),
-        ext_splats2.get_index(packed_offset + 3),
-    ];
+    let ext_a = ext_splats.get4(packed_offset)?;
+    let ext_b = ext_splats2.get4(packed_offset)?;
     raycast_ext_ellipsoid(&ext_a, &ext_b, origin, dir, min_opacity, near, far).map(|hit| [
         hit.t,
         packed_index as f32,
@@ -523,12 +538,12 @@ fn raycast_ext_index_hit(
 
 enum PickBuffers<'a> {
     Packed {
-        packed_splats: &'a Uint32Array,
+        packed_splats: U32Buffer<'a>,
         encoding: &'a SplatEncoding,
     },
     Ext {
-        ext_splats: &'a Uint32Array,
-        ext_splats2: &'a Uint32Array,
+        ext_splats: U32Buffer<'a>,
+        ext_splats2: U32Buffer<'a>,
     },
 }
 
@@ -570,7 +585,7 @@ fn raycast_pick_index_hit(
 }
 
 fn pick_lod_tree(
-    lod_id: u32,
+    lod_tree: &LodTree,
     root_index: u32,
     buffers: PickBuffers,
     hits: &mut Vec<f32>,
@@ -579,15 +594,10 @@ fn pick_lod_tree(
     min_opacity: f32,
     near: f32,
     far: f32,
-) -> Result<(), JsValue> {
-    STATE.with_borrow(|state| {
-        let lod_tree = state
-            .lod_trees
-            .get(&lod_id)
-            .ok_or_else(|| JsValue::from_str("Invalid lod_id"))?;
+) {
         let splats = lod_tree.splats.borrow();
         if root_index as usize >= splats.len() {
-            return Ok(());
+            return;
         }
 
         let mut stack = Vec::with_capacity(512);
@@ -687,9 +697,6 @@ fn pick_lod_tree(
         if let Some(hit) = best_hit {
             hits.extend_from_slice(&hit);
         }
-
-        Ok(())
-    })
 }
 
 pub fn pick_lod_packed_tree(
@@ -704,17 +711,24 @@ pub fn pick_lod_packed_tree(
     far: f32,
     encoding: &SplatEncoding,
 ) -> Result<(), JsValue> {
-    pick_lod_tree(
-        lod_id,
-        root_index,
-        PickBuffers::Packed { packed_splats, encoding },
-        hits,
-        origin,
-        dir,
-        min_opacity,
-        near,
-        far,
-    )
+    STATE.with_borrow(|state| {
+        let lod_tree = state
+            .lod_trees
+            .get(&lod_id)
+            .ok_or_else(|| JsValue::from_str("Invalid lod_id"))?;
+        pick_lod_tree(
+            lod_tree,
+            root_index,
+            PickBuffers::Packed { packed_splats: U32Buffer::Js(packed_splats), encoding },
+            hits,
+            origin,
+            dir,
+            min_opacity,
+            near,
+            far,
+        );
+        Ok(())
+    })
 }
 
 pub fn pick_lod_ext_tree(
@@ -729,17 +743,152 @@ pub fn pick_lod_ext_tree(
     near: f32,
     far: f32,
 ) -> Result<(), JsValue> {
-    pick_lod_tree(
-        lod_id,
-        root_index,
-        PickBuffers::Ext { ext_splats, ext_splats2 },
-        hits,
-        origin,
-        dir,
-        min_opacity,
-        near,
-        far,
-    )
+    STATE.with_borrow(|state| {
+        let lod_tree = state
+            .lod_trees
+            .get(&lod_id)
+            .ok_or_else(|| JsValue::from_str("Invalid lod_id"))?;
+        pick_lod_tree(
+            lod_tree,
+            root_index,
+            PickBuffers::Ext {
+                ext_splats: U32Buffer::Js(ext_splats),
+                ext_splats2: U32Buffer::Js(ext_splats2),
+            },
+            hits,
+            origin,
+            dir,
+            min_opacity,
+            near,
+            far,
+        );
+        Ok(())
+    })
+}
+
+fn copy_u32_array(array: &Uint32Array, dst: &mut Vec<u32>) {
+    let len = array.length() as usize;
+    dst.resize(len, 0);
+    array.copy_to(dst);
+}
+
+#[wasm_bindgen]
+pub fn upload_pick_lod_packed_buffer(lod_id: u32, packed_splats: Uint32Array, version: u32) -> Result<bool, JsValue> {
+    STATE.with_borrow_mut(|state| {
+        if !state.lod_trees.contains_key(&lod_id) {
+            return Err(JsValue::from_str("Invalid lod_id"));
+        }
+        let cache = state.pick_buffers.entry(lod_id).or_default();
+        if cache.version == version && cache.ext.is_none() && !cache.packed.is_empty() {
+            return Ok(false);
+        }
+        copy_u32_array(&packed_splats, &mut cache.packed);
+        cache.ext = None;
+        cache.version = version;
+        Ok(true)
+    })
+}
+
+#[wasm_bindgen]
+pub fn upload_pick_lod_ext_buffers(
+    lod_id: u32,
+    ext_splats: Uint32Array,
+    ext_splats2: Uint32Array,
+    version: u32,
+) -> Result<bool, JsValue> {
+    STATE.with_borrow_mut(|state| {
+        if !state.lod_trees.contains_key(&lod_id) {
+            return Err(JsValue::from_str("Invalid lod_id"));
+        }
+        let cache = state.pick_buffers.entry(lod_id).or_default();
+        if cache.version == version && cache.ext.is_some() && !cache.packed.is_empty() {
+            return Ok(false);
+        }
+        copy_u32_array(&ext_splats, &mut cache.packed);
+        let ext = cache.ext.get_or_insert_with(Vec::new);
+        copy_u32_array(&ext_splats2, ext);
+        cache.version = version;
+        Ok(true)
+    })
+}
+
+pub fn pick_lod_packed_cached_tree(
+    lod_id: u32,
+    root_index: u32,
+    hits: &mut Vec<f32>,
+    origin: [f32; 3],
+    dir: [f32; 3],
+    min_opacity: f32,
+    near: f32,
+    far: f32,
+    encoding: &SplatEncoding,
+) -> Result<(), JsValue> {
+    STATE.with_borrow(|state| {
+        let lod_tree = state
+            .lod_trees
+            .get(&lod_id)
+            .ok_or_else(|| JsValue::from_str("Invalid lod_id"))?;
+        let cache = state
+            .pick_buffers
+            .get(&lod_id)
+            .ok_or_else(|| JsValue::from_str("Missing pick buffer"))?;
+        pick_lod_tree(
+            lod_tree,
+            root_index,
+            PickBuffers::Packed {
+                packed_splats: U32Buffer::Slice(&cache.packed),
+                encoding,
+            },
+            hits,
+            origin,
+            dir,
+            min_opacity,
+            near,
+            far,
+        );
+        Ok(())
+    })
+}
+
+pub fn pick_lod_ext_cached_tree(
+    lod_id: u32,
+    root_index: u32,
+    hits: &mut Vec<f32>,
+    origin: [f32; 3],
+    dir: [f32; 3],
+    min_opacity: f32,
+    near: f32,
+    far: f32,
+) -> Result<(), JsValue> {
+    STATE.with_borrow(|state| {
+        let lod_tree = state
+            .lod_trees
+            .get(&lod_id)
+            .ok_or_else(|| JsValue::from_str("Invalid lod_id"))?;
+        let cache = state
+            .pick_buffers
+            .get(&lod_id)
+            .ok_or_else(|| JsValue::from_str("Missing pick buffer"))?;
+        let ext = cache
+            .ext
+            .as_ref()
+            .ok_or_else(|| JsValue::from_str("Missing ext pick buffer"))?;
+        pick_lod_tree(
+            lod_tree,
+            root_index,
+            PickBuffers::Ext {
+                ext_splats: U32Buffer::Slice(&cache.packed),
+                ext_splats2: U32Buffer::Slice(ext),
+            },
+            hits,
+            origin,
+            dir,
+            min_opacity,
+            near,
+            far,
+        );
+        Ok(())
+    })
 }
 
 #[wasm_bindgen]

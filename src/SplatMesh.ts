@@ -4,9 +4,13 @@ import {
   get_raycast_buffer,
   get_raycast_buffer2,
   pick_lod_ext_buffers,
+  pick_lod_ext_cached_buffers,
   pick_lod_packed_buffer,
+  pick_lod_packed_cached_buffer,
   raycast_ext_buffers,
   raycast_packed_buffer,
+  upload_pick_lod_ext_buffers,
+  upload_pick_lod_packed_buffer,
 } from "spark-rs";
 import { ExtSplats } from "./ExtSplats";
 import { PackedSplats } from "./PackedSplats";
@@ -1231,43 +1235,82 @@ export class SplatMesh extends SplatGenerator {
           this.raycast(raycaster, intersects);
           return;
         }
-        newIntersections = pick_lod_ext_buffers(
-          lodId,
-          rootIndex,
-          ext1,
-          ext2,
-          origin.x,
-          origin.y,
-          origin.z,
-          direction.x,
-          direction.y,
-          direction.z,
-          opts?.minRaycastOpacity ?? this.minRaycastOpacity,
-          near,
-          far,
-        );
+        if (paged) {
+          const version = this.paged?.pager?.pickBufferVersion ?? 0;
+          upload_pick_lod_ext_buffers(lodId, ext1, ext2, version);
+          newIntersections = pick_lod_ext_cached_buffers(
+            lodId,
+            rootIndex,
+            origin.x,
+            origin.y,
+            origin.z,
+            direction.x,
+            direction.y,
+            direction.z,
+            opts?.minRaycastOpacity ?? this.minRaycastOpacity,
+            near,
+            far,
+          );
+        } else {
+          newIntersections = pick_lod_ext_buffers(
+            lodId,
+            rootIndex,
+            ext1,
+            ext2,
+            origin.x,
+            origin.y,
+            origin.z,
+            direction.x,
+            direction.y,
+            direction.z,
+            opts?.minRaycastOpacity ?? this.minRaycastOpacity,
+            near,
+            far,
+          );
+        }
       } else {
         if (!packed) {
           this.raycast(raycaster, intersects);
           return;
         }
-        newIntersections = pick_lod_packed_buffer(
-          lodId,
-          rootIndex,
-          packed,
-          origin.x,
-          origin.y,
-          origin.z,
-          direction.x,
-          direction.y,
-          direction.z,
-          opts?.minRaycastOpacity ?? this.minRaycastOpacity,
-          near,
-          far,
-          splatEncoding?.lnScaleMin ?? LN_SCALE_MIN,
-          splatEncoding?.lnScaleMax ?? LN_SCALE_MAX,
-          splatEncoding?.lodOpacity ?? false,
-        );
+        if (paged) {
+          const version = this.paged?.pager?.pickBufferVersion ?? 0;
+          upload_pick_lod_packed_buffer(lodId, packed, version);
+          newIntersections = pick_lod_packed_cached_buffer(
+            lodId,
+            rootIndex,
+            origin.x,
+            origin.y,
+            origin.z,
+            direction.x,
+            direction.y,
+            direction.z,
+            opts?.minRaycastOpacity ?? this.minRaycastOpacity,
+            near,
+            far,
+            splatEncoding?.lnScaleMin ?? LN_SCALE_MIN,
+            splatEncoding?.lnScaleMax ?? LN_SCALE_MAX,
+            splatEncoding?.lodOpacity ?? false,
+          );
+        } else {
+          newIntersections = pick_lod_packed_buffer(
+            lodId,
+            rootIndex,
+            packed,
+            origin.x,
+            origin.y,
+            origin.z,
+            direction.x,
+            direction.y,
+            direction.z,
+            opts?.minRaycastOpacity ?? this.minRaycastOpacity,
+            near,
+            far,
+            splatEncoding?.lnScaleMin ?? LN_SCALE_MIN,
+            splatEncoding?.lnScaleMax ?? LN_SCALE_MAX,
+            splatEncoding?.lodOpacity ?? false,
+          );
+        }
       }
     } catch {
       this.raycast(raycaster, intersects);

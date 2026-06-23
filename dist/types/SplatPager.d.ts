@@ -123,6 +123,7 @@ export declare class SplatPager {
     freeablePages: number[];
     newUploads: PageUpload[];
     readyUploads: PageUpload[];
+    pickBufferVersion: number;
     lodTreeUpdates: {
         splats: PagedSplats;
         page: number;

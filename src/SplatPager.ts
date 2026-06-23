@@ -541,6 +541,7 @@ export class SplatPager {
   freeablePages: number[];
   newUploads: PageUpload[];
   readyUploads: PageUpload[];
+  pickBufferVersion = 1;
   lodTreeUpdates: {
     splats: PagedSplats;
     page: number;
@@ -983,6 +984,7 @@ export class SplatPager {
     if (extArray) {
       uploadTextureLayer(this.extTexture, page, pageBase * 4, extArray);
     }
+    this.pickBufferVersion++;
 
     // In case of extSplats there can be 4 shArrays for 3 sh degrees
     const numSh = Math.min(shArrays.length, 3);

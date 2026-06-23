@@ -21,7 +21,10 @@ mod packed_splats;
 mod ext_splats;
 
 mod lod_tree;
-use lod_tree::{pick_lod_ext_tree, pick_lod_packed_tree};
+use lod_tree::{
+    pick_lod_ext_cached_tree, pick_lod_ext_tree, pick_lod_packed_cached_tree,
+    pick_lod_packed_tree,
+};
 
 #[wasm_bindgen(start)]
 pub fn wasm_start() {
@@ -553,6 +556,33 @@ pub fn pick_lod_packed_buffer(
 }
 
 #[wasm_bindgen]
+pub fn pick_lod_packed_cached_buffer(
+    lod_id: u32, root_index: u32,
+    origin_x: f32, origin_y: f32, origin_z: f32,
+    dir_x: f32, dir_y: f32, dir_z: f32,
+    min_opacity: f32, near: f32, far: f32,
+    ln_scale_min: f32, ln_scale_max: f32, lod_opacity: bool,
+) -> Result<Float32Array, JsValue> {
+    RAYCAST_BUFFERS.with_borrow_mut(|(_, _, distances)| {
+        let encoding = SplatEncoding {
+            ln_scale_min,
+            ln_scale_max,
+            lod_opacity,
+            ..Default::default()
+        };
+
+        distances.clear();
+        pick_lod_packed_cached_tree(
+            lod_id, root_index, distances,
+            [origin_x, origin_y, origin_z], [dir_x, dir_y, dir_z],
+            min_opacity, near, far, &encoding,
+        )?;
+
+        Ok(unsafe { Float32Array::view(&distances) })
+    })
+}
+
+#[wasm_bindgen]
 pub fn pick_lod_ext_buffers(
     lod_id: u32, root_index: u32, ext_splats: Uint32Array, ext_splats2: Uint32Array,
     origin_x: f32, origin_y: f32, origin_z: f32,
@@ -563,6 +593,25 @@ pub fn pick_lod_ext_buffers(
         distances.clear();
         pick_lod_ext_tree(
             lod_id, root_index, &ext_splats, &ext_splats2, distances,
+            [origin_x, origin_y, origin_z], [dir_x, dir_y, dir_z],
+            min_opacity, near, far,
+        )?;
+
+        Ok(unsafe { Float32Array::view(&distances) })
+    })
+}
+
+#[wasm_bindgen]
+pub fn pick_lod_ext_cached_buffers(
+    lod_id: u32, root_index: u32,
+    origin_x: f32, origin_y: f32, origin_z: f32,
+    dir_x: f32, dir_y: f32, dir_z: f32,
+    min_opacity: f32, near: f32, far: f32,
+) -> Result<Float32Array, JsValue> {
+    RAYCAST_BUFFERS.with_borrow_mut(|(_, _, distances)| {
+        distances.clear();
+        pick_lod_ext_cached_tree(
+            lod_id, root_index, distances,
             [origin_x, origin_y, origin_z], [dir_x, dir_y, dir_z],
             min_opacity, near, far,
         )?;
