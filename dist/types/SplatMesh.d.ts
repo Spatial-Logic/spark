@@ -168,7 +168,6 @@ export declare class SplatMesh extends SplatGenerator {
     pickLod(raycaster: THREE.Raycaster, intersects: SplatIntersection[], opts?: {
         minRaycastOpacity?: number;
     }): void;
-    private pushDetailedRaycastIntersections;
     private pushPickLodIntersections;
     static raycastBuffer: Float32Array<ArrayBuffer>;
     private appendRaycastBuffer;

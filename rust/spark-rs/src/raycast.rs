@@ -7,7 +7,6 @@ pub struct PackedRaycastHit {
     pub t: f32,
     pub point: [f32; 3],
     pub normal: [f32; 3],
-    pub scale: f32,
 }
 
 pub fn raycast_packed_ellipsoids(
@@ -50,7 +49,6 @@ pub fn raycast_packed_ellipsoid(
         t,
         point,
         normal: splat_surface_normal(center, scale, quat, origin),
-        scale: scale[0].max(scale[1]).max(scale[2]),
     })
 }
 
@@ -94,7 +92,6 @@ pub fn raycast_ext_ellipsoid(
         t,
         point,
         normal: splat_surface_normal(center, scale, quat, origin),
-        scale: scale[0].max(scale[1]).max(scale[2]),
     })
 }
 

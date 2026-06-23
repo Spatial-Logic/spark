@@ -482,31 +482,6 @@ fn raycast_packed_index_hit(
     ])
 }
 
-fn raycast_packed_index(
-    packed_splats: &Uint32Array,
-    packed_index: u32,
-    hits: &mut Vec<f32>,
-    origin: [f32; 3],
-    dir: [f32; 3],
-    min_opacity: f32,
-    near: f32,
-    far: f32,
-    encoding: &SplatEncoding,
-) {
-    if let Some(hit) = raycast_packed_index_hit(
-        packed_splats,
-        packed_index,
-        origin,
-        dir,
-        min_opacity,
-        near,
-        far,
-        encoding,
-    ) {
-        hits.extend_from_slice(&hit);
-    }
-}
-
 fn raycast_ext_index_hit(
     ext_splats: &Uint32Array,
     ext_splats2: &Uint32Array,
@@ -544,31 +519,6 @@ fn raycast_ext_index_hit(
         hit.normal[1],
         hit.normal[2],
     ])
-}
-
-fn raycast_ext_index(
-    ext_splats: &Uint32Array,
-    ext_splats2: &Uint32Array,
-    packed_index: u32,
-    hits: &mut Vec<f32>,
-    origin: [f32; 3],
-    dir: [f32; 3],
-    min_opacity: f32,
-    near: f32,
-    far: f32,
-) {
-    if let Some(hit) = raycast_ext_index_hit(
-        ext_splats,
-        ext_splats2,
-        packed_index,
-        origin,
-        dir,
-        min_opacity,
-        near,
-        far,
-    ) {
-        hits.extend_from_slice(&hit);
-    }
 }
 
 enum PickBuffers<'a> {
@@ -619,20 +569,6 @@ fn raycast_pick_index_hit(
     }
 }
 
-fn with_node_size(hit: [f32; 8], node_size: f32) -> [f32; 9] {
-    [
-        hit[0],
-        hit[1],
-        hit[2],
-        hit[3],
-        hit[4],
-        hit[5],
-        hit[6],
-        hit[7],
-        node_size,
-    ]
-}
-
 fn pick_lod_tree(
     lod_id: u32,
     root_index: u32,
@@ -657,7 +593,7 @@ fn pick_lod_tree(
         let mut stack = Vec::with_capacity(512);
         stack.push(root_index);
         let mut best_t = far;
-        let mut best_hit: Option<[f32; 9]> = None;
+        let mut best_hit: Option<[f32; 8]> = None;
 
         while let Some(index) = stack.pop() {
             let Some(splat) = splats.get(index as usize) else {
@@ -685,7 +621,7 @@ fn pick_lod_tree(
                     ) {
                         if hit[0] < best_t {
                             best_t = hit[0];
-                            best_hit = Some(with_node_size(hit, splat.size()));
+                            best_hit = Some(hit);
                         }
                     }
                     continue;
@@ -743,7 +679,7 @@ fn pick_lod_tree(
             ) {
                 if hit[0] < best_t {
                     best_t = hit[0];
-                    best_hit = Some(with_node_size(hit, splat.size()));
+                    best_hit = Some(hit);
                 }
             }
         }
@@ -781,33 +717,6 @@ pub fn pick_lod_packed_tree(
     )
 }
 
-pub fn pick_lod_packed_indices(
-    packed_splats: &Uint32Array,
-    indices: &Uint32Array,
-    count: u32,
-    hits: &mut Vec<f32>,
-    origin: [f32; 3],
-    dir: [f32; 3],
-    min_opacity: f32,
-    near: f32,
-    far: f32,
-    encoding: &SplatEncoding,
-) {
-    for i in 0..count.min(indices.length()) {
-        raycast_packed_index(
-            packed_splats,
-            indices.get_index(i),
-            hits,
-            origin,
-            dir,
-            min_opacity,
-            near,
-            far,
-            encoding,
-        );
-    }
-}
-
 pub fn pick_lod_ext_tree(
     lod_id: u32,
     root_index: u32,
@@ -831,33 +740,6 @@ pub fn pick_lod_ext_tree(
         near,
         far,
     )
-}
-
-pub fn pick_lod_ext_indices(
-    ext_splats: &Uint32Array,
-    ext_splats2: &Uint32Array,
-    indices: &Uint32Array,
-    count: u32,
-    hits: &mut Vec<f32>,
-    origin: [f32; 3],
-    dir: [f32; 3],
-    min_opacity: f32,
-    near: f32,
-    far: f32,
-) {
-    for i in 0..count.min(indices.length()) {
-        raycast_ext_index(
-            ext_splats,
-            ext_splats2,
-            indices.get_index(i),
-            hits,
-            origin,
-            dir,
-            min_opacity,
-            near,
-            far,
-        );
-    }
 }
 
 #[wasm_bindgen]

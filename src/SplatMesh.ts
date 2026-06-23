@@ -4,9 +4,7 @@ import {
   get_raycast_buffer,
   get_raycast_buffer2,
   pick_lod_ext_buffers,
-  pick_lod_ext_raycast_buffers,
   pick_lod_packed_buffer,
-  pick_lod_packed_raycast_buffer,
   raycast_ext_buffers,
   raycast_packed_buffer,
 } from "spark-rs";
@@ -1033,9 +1031,6 @@ export class SplatMesh extends SplatGenerator {
     const worldToMeshRot = new THREE.Matrix3().setFromMatrix4(worldToMesh);
     const origin = ray.origin.clone().applyMatrix4(worldToMesh);
     const direction = ray.direction.clone().applyMatrix3(worldToMeshRot);
-    const normalMatrix = new THREE.Matrix3().getNormalMatrix(this.matrixWorld);
-    const worldScale = new THREE.Vector3().setFromMatrixScale(this.matrixWorld);
-    const worldScaleFactor = Math.max(worldScale.x, worldScale.y, worldScale.z);
 
     const buffer = get_raycast_buffer();
     const bufferSize = buffer.length / 4;
@@ -1053,7 +1048,6 @@ export class SplatMesh extends SplatGenerator {
           ? (this.context.lodIndices.value.image.data as Uint32Array)
           : null) ??
       null;
-    const detailedRaycast = indices != null;
 
     if (!ext) {
       const packed = paged
@@ -1083,50 +1077,25 @@ export class SplatMesh extends SplatGenerator {
           }
         }
 
-        if (indices) {
-          this.pushDetailedRaycastIntersections(
-            pick_lod_packed_raycast_buffer(
-              indices.subarray(base, base + count),
-              count,
-              origin.x,
-              origin.y,
-              origin.z,
-              direction.x,
-              direction.y,
-              direction.z,
-              this.minRaycastOpacity,
-              near,
-              far,
-              splatEncoding?.lnScaleMin ?? LN_SCALE_MIN,
-              splatEncoding?.lnScaleMax ?? LN_SCALE_MAX,
-              splatEncoding?.lodOpacity ?? false,
-            ),
-            ray,
-            normalMatrix,
-            worldScaleFactor,
-            intersects,
-          );
-        } else {
-          const newIntersections = raycast_packed_buffer(
-            origin.x,
-            origin.y,
-            origin.z,
-            direction.x,
-            direction.y,
-            direction.z,
-            this.minRaycastOpacity,
-            near,
-            far,
-            count,
-            splatEncoding?.lnScaleMin ?? LN_SCALE_MIN,
-            splatEncoding?.lnScaleMax ?? LN_SCALE_MAX,
-            splatEncoding?.lodOpacity ?? false,
-          );
-          intersections = this.appendRaycastBuffer(
-            intersections,
-            newIntersections,
-          );
-        }
+        const newIntersections = raycast_packed_buffer(
+          origin.x,
+          origin.y,
+          origin.z,
+          direction.x,
+          direction.y,
+          direction.z,
+          this.minRaycastOpacity,
+          near,
+          far,
+          count,
+          splatEncoding?.lnScaleMin ?? LN_SCALE_MIN,
+          splatEncoding?.lnScaleMax ?? LN_SCALE_MAX,
+          splatEncoding?.lodOpacity ?? false,
+        );
+        intersections = this.appendRaycastBuffer(
+          intersections,
+          newIntersections,
+        );
       }
     } else {
       const buffer2 = get_raycast_buffer2();
@@ -1164,49 +1133,23 @@ export class SplatMesh extends SplatGenerator {
           }
         }
 
-        if (indices) {
-          this.pushDetailedRaycastIntersections(
-            pick_lod_ext_raycast_buffers(
-              indices.subarray(base, base + count),
-              count,
-              origin.x,
-              origin.y,
-              origin.z,
-              direction.x,
-              direction.y,
-              direction.z,
-              this.minRaycastOpacity,
-              near,
-              far,
-            ),
-            ray,
-            normalMatrix,
-            worldScaleFactor,
-            intersects,
-          );
-        } else {
-          const newIntersections = raycast_ext_buffers(
-            origin.x,
-            origin.y,
-            origin.z,
-            direction.x,
-            direction.y,
-            direction.z,
-            this.minRaycastOpacity,
-            near,
-            far,
-            count,
-          );
-          intersections = this.appendRaycastBuffer(
-            intersections,
-            newIntersections,
-          );
-        }
+        const newIntersections = raycast_ext_buffers(
+          origin.x,
+          origin.y,
+          origin.z,
+          direction.x,
+          direction.y,
+          direction.z,
+          this.minRaycastOpacity,
+          near,
+          far,
+          count,
+        );
+        intersections = this.appendRaycastBuffer(
+          intersections,
+          newIntersections,
+        );
       }
-    }
-
-    if (detailedRaycast) {
-      return;
     }
 
     for (const distance of SplatMesh.raycastBuffer.subarray(0, intersections)) {
@@ -1280,8 +1223,6 @@ export class SplatMesh extends SplatGenerator {
     const origin = ray.origin.clone().applyMatrix4(worldToMesh);
     const direction = ray.direction.clone().applyMatrix3(worldToMeshRot);
     const normalMatrix = new THREE.Matrix3().getNormalMatrix(this.matrixWorld);
-    const worldScale = new THREE.Vector3().setFromMatrixScale(this.matrixWorld);
-    const worldScaleFactor = Math.max(worldScale.x, worldScale.y, worldScale.z);
 
     let newIntersections: Float32Array;
     try {
@@ -1337,69 +1278,17 @@ export class SplatMesh extends SplatGenerator {
       newIntersections,
       ray,
       normalMatrix,
-      worldScaleFactor,
       intersects,
     );
-  }
-
-  private pushDetailedRaycastIntersections(
-    newIntersections: Float32Array,
-    ray: THREE.Ray,
-    normalMatrix: THREE.Matrix3,
-    worldScaleFactor: number,
-    intersects: SplatIntersection[],
-  ) {
-    for (let i = 0; i + 8 < newIntersections.length; i += 9) {
-      const localPoint = new THREE.Vector3(
-        newIntersections[i + 2],
-        newIntersections[i + 3],
-        newIntersections[i + 4],
-      );
-      const point = localPoint.applyMatrix4(this.matrixWorld);
-      const distance = point.distanceTo(ray.origin);
-      const localNormal = new THREE.Vector3(
-        newIntersections[i + 5],
-        newIntersections[i + 6],
-        newIntersections[i + 7],
-      );
-      let worldNormal: THREE.Vector3 | null = null;
-      if (localNormal.lengthSq() > 1e-12) {
-        worldNormal = localNormal.applyMatrix3(normalMatrix);
-        if (worldNormal.lengthSq() > 1e-12) {
-          worldNormal.normalize();
-          if (worldNormal.dot(ray.direction) > 0) {
-            worldNormal.negate();
-          }
-        } else {
-          worldNormal = null;
-        }
-      }
-      const index = newIntersections[i + 1];
-      intersects.push({
-        distance,
-        point,
-        index,
-        object: this,
-        sparkHit: {
-          worldPoint: point.clone(),
-          worldNormal,
-          extras: {
-            splatIndex: index,
-            splatScale: newIntersections[i + 8] * worldScaleFactor,
-          },
-        },
-      });
-    }
   }
 
   private pushPickLodIntersections(
     newIntersections: Float32Array,
     ray: THREE.Ray,
     normalMatrix: THREE.Matrix3,
-    worldScaleFactor: number,
     intersects: SplatIntersection[],
   ) {
-    for (let i = 0; i + 8 < newIntersections.length; i += 9) {
+    for (let i = 0; i + 7 < newIntersections.length; i += 8) {
       const localPoint = new THREE.Vector3(
         newIntersections[i + 2],
         newIntersections[i + 3],
@@ -1444,10 +1333,7 @@ export class SplatMesh extends SplatGenerator {
         sparkHit: {
           worldPoint: point.clone(),
           worldNormal,
-          extras: {
-            splatIndex: index,
-            nodeSize: newIntersections[i + 8] * worldScaleFactor,
-          },
+          extras: { splatIndex: index },
         },
       });
     }

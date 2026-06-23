@@ -1,0 +1,66 @@
+# Rebuilds the WASM + JS `dist/` for our forked native pickLod and commits it,
+# so spatial-logic can pin `github:Spatial-Logic/spark#<sha>` WITHOUT a local
+# Rust toolchain (Spark ships `dist/` committed; consumers just fetch it).
+#
+# This is separate from upstream's `build-dist.yml` (which targets `main` and
+# runs only `npm run build`, no WASM) so our additive fork stays a clean
+# rebase target. See spatial-logic `docs/spark-fork.md` for the full picture.
+name: build-pick-lod-dist
+
+on:
+  push:
+    branches: [feat/pick-lod]
+    paths:
+      - 'src/**'
+      - 'rust/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # default GITHUB_TOKEN; its pushes do NOT re-trigger workflows (no loop)
+
+concurrency:
+  group: build-pick-lod-dist
+  cancel-in-progress: true
+
+jobs:
+  build-dist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain (matches rust/Cargo.toml rust-version = 1.82)
+        uses: dtolnay/rust-toolchain@1.82
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked || cargo install wasm-pack
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+
+      - run: npm install
+
+      # build:wasm rebuilds the Rust -> WASM package (rust/build_rust_wasm.sh:
+      # rustup target add wasm32-unknown-unknown; wasm-pack build --target web
+      # --release with RUSTFLAGS=-C target-feature=+simd128,+bulk-memory).
+      - name: Build WASM
+        run: npm run build:wasm
+
+      # build bundles the WASM (base64) into dist/spark.module.js + cjs + types.
+      - name: Build dist
+        run: npm run build
+
+      - name: Commit rebuilt dist
+        run: |
+          git config user.name  "sl-ci[bot]"
+          git config user.email "ci@spatial-logic.noreply.github.com"
+          git add dist
+          if git diff --cached --quiet; then
+            echo "dist unchanged"
+          else
+            git commit -m "ci: rebuild pickLod dist [skip ci]"
+            git push origin HEAD:feat/pick-lod
+            echo "Pinnable SHA: $(git rev-parse HEAD)"
+          fi
