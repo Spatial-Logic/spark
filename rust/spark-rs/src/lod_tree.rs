@@ -197,6 +197,34 @@ thread_local! {
     static STATE: RefCell<LodState> = RefCell::new(LodState::new());
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct PickStats {
+    pub internal_nodes_visited: u32,
+    pub leaf_nodes_visited: u32,
+    pub splats_tested: u32,
+    pub splats_hit: u32,
+    pub proxy_tests: u32,
+    pub max_depth: u32,
+}
+
+thread_local! {
+    static PICK_STATS: RefCell<PickStats> = RefCell::new(PickStats::default());
+}
+
+#[wasm_bindgen]
+pub fn last_pick_stats() -> Uint32Array {
+    PICK_STATS.with_borrow(|s| {
+        let arr = Uint32Array::new_with_length(6);
+        arr.set_index(0, s.internal_nodes_visited);
+        arr.set_index(1, s.leaf_nodes_visited);
+        arr.set_index(2, s.splats_tested);
+        arr.set_index(3, s.splats_hit);
+        arr.set_index(4, s.proxy_tests);
+        arr.set_index(5, s.max_depth);
+        arr
+    })
+}
+
 fn set_lod_tree_data(state: &mut LodState, lod_id: u32, page_base: u32, _chunk_base: u32, count: u32, lod_tree_data: &Uint32Array) {
     let lod_tree = state.lod_trees.get(&lod_id).unwrap();
     let mut splats = lod_tree.splats.borrow_mut();
@@ -594,32 +622,46 @@ fn pick_lod_tree(
     min_opacity: f32,
     near: f32,
     far: f32,
+    dry_run: bool,
 ) {
+        PICK_STATS.with_borrow_mut(|s| {
+            *s = PickStats::default();
+        });
         let splats = lod_tree.splats.borrow();
         if root_index as usize >= splats.len() {
             return;
         }
 
-        let mut stack = Vec::with_capacity(512);
-        stack.push(root_index);
+        let mut stack: Vec<(u32, u32)> = Vec::with_capacity(512);
+        stack.push((root_index, 0));
         let mut best_t = far;
         let mut best_hit: Option<[f32; 8]> = None;
 
-        while let Some(index) = stack.pop() {
+        while let Some((index, depth)) = stack.pop() {
             let Some(splat) = splats.get(index as usize) else {
                 continue;
             };
+            PICK_STATS.with_borrow_mut(|s| {
+                if depth > s.max_depth {
+                    s.max_depth = depth;
+                }
+            });
 
             if splat.child_count > 0 {
                 if !ray_might_hit_splat(origin, dir, near, best_t, splat, INTERNAL_NODE_SLACK) {
                     continue;
                 }
+                PICK_STATS.with_borrow_mut(|s| s.internal_nodes_visited += 1);
 
                 if !child_range_resident(
                     splat.child_count,
                     splat.child_start,
                     &lod_tree.chunk_to_page,
                 ) {
+                    PICK_STATS.with_borrow_mut(|s| s.proxy_tests += 1);
+                    if dry_run {
+                        continue;
+                    }
                     if let Some(hit) = raycast_pick_index_hit(
                         &buffers,
                         index,
@@ -669,12 +711,17 @@ fn pick_lod_tree(
                     b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal)
                 });
                 for (_, child) in children {
-                    stack.push(child);
+                    stack.push((child, depth + 1));
                 }
                 continue;
             }
 
             if !ray_might_hit_splat(origin, dir, near, best_t, splat, LEAF_NODE_SLACK) {
+                continue;
+            }
+            PICK_STATS.with_borrow_mut(|s| s.leaf_nodes_visited += 1);
+            PICK_STATS.with_borrow_mut(|s| s.splats_tested += 1);
+            if dry_run {
                 continue;
             }
 
@@ -688,6 +735,7 @@ fn pick_lod_tree(
                 best_t,
             ) {
                 if hit[0] < best_t {
+                    PICK_STATS.with_borrow_mut(|s| s.splats_hit += 1);
                     best_t = hit[0];
                     best_hit = Some(hit);
                 }
@@ -709,6 +757,7 @@ pub fn pick_lod_packed_tree(
     min_opacity: f32,
     near: f32,
     far: f32,
+    dry_run: bool,
     encoding: &SplatEncoding,
 ) -> Result<(), JsValue> {
     STATE.with_borrow(|state| {
@@ -726,6 +775,7 @@ pub fn pick_lod_packed_tree(
             min_opacity,
             near,
             far,
+            dry_run,
         );
         Ok(())
     })
@@ -742,6 +792,7 @@ pub fn pick_lod_ext_tree(
     min_opacity: f32,
     near: f32,
     far: f32,
+    dry_run: bool,
 ) -> Result<(), JsValue> {
     STATE.with_borrow(|state| {
         let lod_tree = state
@@ -761,6 +812,7 @@ pub fn pick_lod_ext_tree(
             min_opacity,
             near,
             far,
+            dry_run,
         );
         Ok(())
     })
@@ -821,6 +873,7 @@ pub fn pick_lod_packed_cached_tree(
     min_opacity: f32,
     near: f32,
     far: f32,
+    dry_run: bool,
     encoding: &SplatEncoding,
 ) -> Result<(), JsValue> {
     STATE.with_borrow(|state| {
@@ -845,6 +898,7 @@ pub fn pick_lod_packed_cached_tree(
             min_opacity,
             near,
             far,
+            dry_run,
         );
         Ok(())
     })
@@ -859,6 +913,7 @@ pub fn pick_lod_ext_cached_tree(
     min_opacity: f32,
     near: f32,
     far: f32,
+    dry_run: bool,
 ) -> Result<(), JsValue> {
     STATE.with_borrow(|state| {
         let lod_tree = state
@@ -886,6 +941,7 @@ pub fn pick_lod_ext_cached_tree(
             min_opacity,
             near,
             far,
+            dry_run,
         );
         Ok(())
     })
@@ -1178,6 +1234,7 @@ mod tests {
             0.01,
             0.0,
             10.0,
+            false,
         );
         hits
     }
@@ -1219,6 +1276,7 @@ mod tests {
             0.01,
             0.0,
             10.0,
+            false,
             &encoding,
         )
         .unwrap();
@@ -1266,6 +1324,7 @@ mod tests {
                 0.01,
                 0.0,
                 10.0,
+                false,
             );
         });
 

@@ -534,7 +534,7 @@ pub fn pick_lod_packed_buffer(
     origin_x: f32, origin_y: f32, origin_z: f32,
     dir_x: f32, dir_y: f32, dir_z: f32,
     min_opacity: f32, near: f32, far: f32,
-    ln_scale_min: f32, ln_scale_max: f32, lod_opacity: bool,
+    ln_scale_min: f32, ln_scale_max: f32, lod_opacity: bool, dry_run: bool,
 ) -> Result<Float32Array, JsValue> {
     RAYCAST_BUFFERS.with_borrow_mut(|(_, _, distances)| {
         let encoding = SplatEncoding {
@@ -548,7 +548,7 @@ pub fn pick_lod_packed_buffer(
         pick_lod_packed_tree(
             lod_id, root_index, &packed_splats, distances,
             [origin_x, origin_y, origin_z], [dir_x, dir_y, dir_z],
-            min_opacity, near, far, &encoding,
+            min_opacity, near, far, dry_run, &encoding,
         )?;
 
         Ok(unsafe { Float32Array::view(&distances) })
@@ -561,7 +561,7 @@ pub fn pick_lod_packed_cached_buffer(
     origin_x: f32, origin_y: f32, origin_z: f32,
     dir_x: f32, dir_y: f32, dir_z: f32,
     min_opacity: f32, near: f32, far: f32,
-    ln_scale_min: f32, ln_scale_max: f32, lod_opacity: bool,
+    ln_scale_min: f32, ln_scale_max: f32, lod_opacity: bool, dry_run: bool,
 ) -> Result<Float32Array, JsValue> {
     RAYCAST_BUFFERS.with_borrow_mut(|(_, _, distances)| {
         let encoding = SplatEncoding {
@@ -575,7 +575,7 @@ pub fn pick_lod_packed_cached_buffer(
         pick_lod_packed_cached_tree(
             lod_id, root_index, distances,
             [origin_x, origin_y, origin_z], [dir_x, dir_y, dir_z],
-            min_opacity, near, far, &encoding,
+            min_opacity, near, far, dry_run, &encoding,
         )?;
 
         Ok(unsafe { Float32Array::view(&distances) })
@@ -587,14 +587,14 @@ pub fn pick_lod_ext_buffers(
     lod_id: u32, root_index: u32, ext_splats: Uint32Array, ext_splats2: Uint32Array,
     origin_x: f32, origin_y: f32, origin_z: f32,
     dir_x: f32, dir_y: f32, dir_z: f32,
-    min_opacity: f32, near: f32, far: f32,
+    min_opacity: f32, near: f32, far: f32, dry_run: bool,
 ) -> Result<Float32Array, JsValue> {
     RAYCAST_BUFFERS.with_borrow_mut(|(_, _, distances)| {
         distances.clear();
         pick_lod_ext_tree(
             lod_id, root_index, &ext_splats, &ext_splats2, distances,
             [origin_x, origin_y, origin_z], [dir_x, dir_y, dir_z],
-            min_opacity, near, far,
+            min_opacity, near, far, dry_run,
         )?;
 
         Ok(unsafe { Float32Array::view(&distances) })
@@ -606,14 +606,14 @@ pub fn pick_lod_ext_cached_buffers(
     lod_id: u32, root_index: u32,
     origin_x: f32, origin_y: f32, origin_z: f32,
     dir_x: f32, dir_y: f32, dir_z: f32,
-    min_opacity: f32, near: f32, far: f32,
+    min_opacity: f32, near: f32, far: f32, dry_run: bool,
 ) -> Result<Float32Array, JsValue> {
     RAYCAST_BUFFERS.with_borrow_mut(|(_, _, distances)| {
         distances.clear();
         pick_lod_ext_cached_tree(
             lod_id, root_index, distances,
             [origin_x, origin_y, origin_z], [dir_x, dir_y, dir_z],
-            min_opacity, near, far,
+            min_opacity, near, far, dry_run,
         )?;
 
         Ok(unsafe { Float32Array::view(&distances) })

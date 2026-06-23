@@ -280,15 +280,15 @@ function new_shared_lod_tree(orig_lod_id) {
   }
   return takeFromExternrefTable0(ret[0]);
 }
-function pick_lod_ext_buffers(lod_id, root_index, ext_splats, ext_splats2, origin_x, origin_y, origin_z, dir_x, dir_y, dir_z, min_opacity, near, far) {
-  const ret = wasm.pick_lod_ext_buffers(lod_id, root_index, ext_splats, ext_splats2, origin_x, origin_y, origin_z, dir_x, dir_y, dir_z, min_opacity, near, far);
+function pick_lod_ext_buffers(lod_id, root_index, ext_splats, ext_splats2, origin_x, origin_y, origin_z, dir_x, dir_y, dir_z, min_opacity, near, far, dry_run) {
+  const ret = wasm.pick_lod_ext_buffers(lod_id, root_index, ext_splats, ext_splats2, origin_x, origin_y, origin_z, dir_x, dir_y, dir_z, min_opacity, near, far, dry_run);
   if (ret[2]) {
     throw takeFromExternrefTable0(ret[1]);
   }
   return takeFromExternrefTable0(ret[0]);
 }
-function pick_lod_packed_buffer(lod_id, root_index, packed_splats, origin_x, origin_y, origin_z, dir_x, dir_y, dir_z, min_opacity, near, far, ln_scale_min, ln_scale_max, lod_opacity) {
-  const ret = wasm.pick_lod_packed_buffer(lod_id, root_index, packed_splats, origin_x, origin_y, origin_z, dir_x, dir_y, dir_z, min_opacity, near, far, ln_scale_min, ln_scale_max, lod_opacity);
+function pick_lod_packed_buffer(lod_id, root_index, packed_splats, origin_x, origin_y, origin_z, dir_x, dir_y, dir_z, min_opacity, near, far, ln_scale_min, ln_scale_max, lod_opacity, dry_run) {
+  const ret = wasm.pick_lod_packed_buffer(lod_id, root_index, packed_splats, origin_x, origin_y, origin_z, dir_x, dir_y, dir_z, min_opacity, near, far, ln_scale_min, ln_scale_max, lod_opacity, dry_run);
   if (ret[2]) {
     throw takeFromExternrefTable0(ret[1]);
   }
@@ -301,6 +301,9 @@ function raycast_ext_buffers(origin_x, origin_y, origin_z, dir_x, dir_y, dir_z, 
 function raycast_packed_buffer(origin_x, origin_y, origin_z, dir_x, dir_y, dir_z, min_opacity, near, far, count, ln_scale_min, ln_scale_max, lod_opacity) {
   const ret = wasm.raycast_packed_buffer(origin_x, origin_y, origin_z, dir_x, dir_y, dir_z, min_opacity, near, far, count, ln_scale_min, ln_scale_max, lod_opacity);
   return ret;
+}
+function last_pick_stats() {
+  return wasm.last_pick_stats();
 }
 function update_lod_trees(lod_ids, page_bases, chunk_bases, counts, lod_trees) {
   const ptr0 = passArray32ToWasm0(lod_ids, wasm.__wbindgen_malloc);
@@ -12723,7 +12726,8 @@ const _SplatMesh = class _SplatMesh extends SplatGenerator {
             direction.z,
             (opts == null ? void 0 : opts.minRaycastOpacity) ?? this.minRaycastOpacity,
             near,
-            far
+            far,
+            (opts == null ? void 0 : opts.statsDryRun) ?? false
           );
         } else {
           newIntersections = pick_lod_ext_buffers(
@@ -12739,7 +12743,8 @@ const _SplatMesh = class _SplatMesh extends SplatGenerator {
             direction.z,
             (opts == null ? void 0 : opts.minRaycastOpacity) ?? this.minRaycastOpacity,
             near,
-            far
+            far,
+            (opts == null ? void 0 : opts.statsDryRun) ?? false
           );
         }
       } else {
@@ -12763,7 +12768,8 @@ const _SplatMesh = class _SplatMesh extends SplatGenerator {
             far,
             (splatEncoding == null ? void 0 : splatEncoding.lnScaleMin) ?? LN_SCALE_MIN,
             (splatEncoding == null ? void 0 : splatEncoding.lnScaleMax) ?? LN_SCALE_MAX,
-            (splatEncoding == null ? void 0 : splatEncoding.lodOpacity) ?? false
+            (splatEncoding == null ? void 0 : splatEncoding.lodOpacity) ?? false,
+            (opts == null ? void 0 : opts.statsDryRun) ?? false
           );
         } else {
           newIntersections = pick_lod_packed_buffer(
@@ -12781,13 +12787,28 @@ const _SplatMesh = class _SplatMesh extends SplatGenerator {
             far,
             (splatEncoding == null ? void 0 : splatEncoding.lnScaleMin) ?? LN_SCALE_MIN,
             (splatEncoding == null ? void 0 : splatEncoding.lnScaleMax) ?? LN_SCALE_MAX,
-            (splatEncoding == null ? void 0 : splatEncoding.lodOpacity) ?? false
+            (splatEncoding == null ? void 0 : splatEncoding.lodOpacity) ?? false,
+            (opts == null ? void 0 : opts.statsDryRun) ?? false
           );
         }
       }
     } catch {
       this.raycast(raycaster, intersects);
       return;
+    }
+    try {
+      const statsArr = last_pick_stats();
+      const stats = {
+        internalNodesVisited: statsArr[0],
+        leafNodesVisited: statsArr[1],
+        splatsTested: statsArr[2],
+        splatsHit: statsArr[3],
+        proxyTests: statsArr[4],
+        maxDepth: statsArr[5]
+      };
+      this.__lastPickStats = stats;
+      globalThis.__sparkLastPickStats = stats;
+    } catch {
     }
     this.pushPickLodIntersections(
       newIntersections,

@@ -3,6 +3,7 @@ import * as THREE from "three";
 import {
   get_raycast_buffer,
   get_raycast_buffer2,
+  last_pick_stats,
   new_shared_lod_tree as newMainSharedLodTree,
   pick_lod_ext_buffers,
   pick_lod_packed_buffer,
@@ -1171,6 +1172,7 @@ export class SplatMesh extends SplatGenerator {
     intersects: SplatIntersection[],
     opts?: {
       minRaycastOpacity?: number;
+      statsDryRun?: boolean;
     },
   ) {
     if (
@@ -1266,6 +1268,7 @@ export class SplatMesh extends SplatGenerator {
             opts?.minRaycastOpacity ?? this.minRaycastOpacity,
             near,
             far,
+            opts?.statsDryRun ?? false,
           );
         } else {
           newIntersections = pick_lod_ext_buffers(
@@ -1282,6 +1285,7 @@ export class SplatMesh extends SplatGenerator {
             opts?.minRaycastOpacity ?? this.minRaycastOpacity,
             near,
             far,
+            opts?.statsDryRun ?? false,
           );
         }
       } else {
@@ -1306,6 +1310,7 @@ export class SplatMesh extends SplatGenerator {
             splatEncoding?.lnScaleMin ?? LN_SCALE_MIN,
             splatEncoding?.lnScaleMax ?? LN_SCALE_MAX,
             splatEncoding?.lodOpacity ?? false,
+            opts?.statsDryRun ?? false,
           );
         } else {
           newIntersections = pick_lod_packed_buffer(
@@ -1324,12 +1329,30 @@ export class SplatMesh extends SplatGenerator {
             splatEncoding?.lnScaleMin ?? LN_SCALE_MIN,
             splatEncoding?.lnScaleMax ?? LN_SCALE_MAX,
             splatEncoding?.lodOpacity ?? false,
+            opts?.statsDryRun ?? false,
           );
         }
       }
     } catch {
       this.raycast(raycaster, intersects);
       return;
+    }
+
+    try {
+      const statsArr = last_pick_stats() as Uint32Array;
+      const stats = {
+        internalNodesVisited: statsArr[0],
+        leafNodesVisited: statsArr[1],
+        splatsTested: statsArr[2],
+        splatsHit: statsArr[3],
+        proxyTests: statsArr[4],
+        maxDepth: statsArr[5],
+      };
+      (this as unknown as Record<string, unknown>).__lastPickStats = stats;
+      (globalThis as unknown as Record<string, unknown>).__sparkLastPickStats =
+        stats;
+    } catch {
+      // ignore if wasm not updated yet
     }
 
     this.pushPickLodIntersections(
